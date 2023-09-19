@@ -218,7 +218,7 @@ function linkClicked(
   }
 
   e.preventDefault()
-
+  debugger
   const navigate = () => {
     // If the router is an NextRouter instance it will have `beforePopState`
     const routerScroll = scroll ?? true
@@ -597,6 +597,7 @@ const Link = React.forwardRef<HTMLAnchorElement, LinkPropsReal>(
     } = {
       ref: setRef,
       onClick(e) {
+        debugger
         if (process.env.NODE_ENV !== 'production') {
           if (!e) {
             throw new Error(
