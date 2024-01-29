@@ -1028,6 +1028,7 @@ async function renderToHTMLOrFlightImpl(
               }),
             }
           } else {
+            const rand = ((Math.random() * 1000) | 0).toString(16)
             // We may still be rendering the RSC stream even though the HTML is finished.
             // We wait for the RSC stream to complete and check again if dynamic was used
             const [original, flightSpy] = dataStream.tee()

@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react'
-import { Dynamic } from '../../../components/dynamic'
+import { Dynamic } from '../../../../components/dynamic'
 
 export const dynamic = 'force-dynamic'
 
