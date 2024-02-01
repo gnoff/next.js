@@ -2439,9 +2439,11 @@ function startReadingFromStream(response, stream) {
         value = _ref.value;
 
     if (done) {
+      console.log("DONE")
       close(response);
       return;
     }
+    console.log("VALUE", value)
 
     var buffer = value;
     processBinaryChunk(response, buffer);

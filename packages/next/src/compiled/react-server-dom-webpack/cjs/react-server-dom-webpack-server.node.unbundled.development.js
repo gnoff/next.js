@@ -1751,7 +1751,7 @@ function createLazyWrapperAroundWakeable(wakeable) {
   return lazyType;
 }
 
-function renderElement(request, task, type, key, ref, props) {
+function renderElement(request, task, type, key, ref, props, prevThenableState) {
   if (ref !== null && ref !== undefined) {
     // When the ref moves to the regular props object this will implicitly
     // throw for functions. We could probably relax it to a DEV warning for other
@@ -1772,13 +1772,8 @@ function renderElement(request, task, type, key, ref, props) {
       // This is a reference to a Client Component.
       return [REACT_ELEMENT_TYPE, type, key, props];
     } // This is a server-side component.
-    // Reset the task's thenable state before continuing, so that if a later
-    // component suspends we can reuse the same task object. If the same
-    // component suspends again, the thenable state will be restored.
 
 
-    var prevThenableState = task.thenableState;
-    task.thenableState = null;
     prepareToUseHooksForComponent(prevThenableState);
     var result = type(props);
 
@@ -1796,7 +1791,7 @@ function renderElement(request, task, type, key, ref, props) {
       result = createLazyWrapperAroundWakeable(result);
     }
 
-    return renderModelDestructive(request, task, emptyRoot, '', result);
+    return renderModelDestructive(request, task, emptyRoot, '', result, null);
   } else if (typeof type === 'string') {
     // This is a host element. E.g. HTML.
     return [REACT_ELEMENT_TYPE, type, key, props];
@@ -1806,7 +1801,7 @@ function renderElement(request, task, type, key, ref, props) {
       // it as a wrapper.
       // TODO: If a key is specified, we should propagate its key to any children.
       // Same as if a Server Component has a key.
-      return renderModelDestructive(request, task, emptyRoot, '', props.children);
+      return renderModelDestructive(request, task, emptyRoot, '', props.children, null);
     } // This might be a built-in React component. We'll let the client decide.
     // Any built-in works as long as its props are serializable.
 
@@ -1824,27 +1819,22 @@ function renderElement(request, task, type, key, ref, props) {
           var payload = type._payload;
           var init = type._init;
           var wrappedType = init(payload);
-          return renderElement(request, task, wrappedType, key, ref, props);
+          return renderElement(request, task, wrappedType, key, ref, props, prevThenableState);
         }
 
       case REACT_FORWARD_REF_TYPE:
         {
-          var render = type.render; // Reset the task's thenable state before continuing, so that if a later
-          // component suspends we can reuse the same task object. If the same
-          // component suspends again, the thenable state will be restored.
-
-          var _prevThenableState = task.thenableState;
-          task.thenableState = null;
-          prepareToUseHooksForComponent(_prevThenableState);
+          var render = type.render;
+          prepareToUseHooksForComponent(prevThenableState);
 
           var _result = render(props, undefined);
 
-          return renderModelDestructive(request, task, emptyRoot, '', _result);
+          return renderModelDestructive(request, task, emptyRoot, '', _result, null);
         }
 
       case REACT_MEMO_TYPE:
         {
-          return renderElement(request, task, type.type, key, ref, props);
+          return renderElement(request, task, type.type, key, ref, props, prevThenableState);
         }
     }
   }
@@ -2107,7 +2097,7 @@ var modelRoot = false;
 
 function renderModel(request, task, parent, key, value) {
   try {
-    return renderModelDestructive(request, task, parent, key, value);
+    return renderModelDestructive(request, task, parent, key, value, null);
   } catch (thrownValue) {
     var x = thrownValue === SuspenseException ? // This is a special type of exception used for Suspense. For historical
     // reasons, the rest of the Suspense implementation expects the thrown
@@ -2156,7 +2146,7 @@ function renderModel(request, task, parent, key, value) {
   }
 }
 
-function renderModelDestructive(request, task, parent, parentPropertyName, value) {
+function renderModelDestructive(request, task, parent, parentPropertyName, value, prevThenableState) {
   // Set the currently rendering model
   task.model = value; // Special Symbol, that's very common.
 
@@ -2200,7 +2190,7 @@ function renderModelDestructive(request, task, parent, parentPropertyName, value
 
           var element = value; // Attempt to render the Server Component.
 
-          return renderElement(request, task, element.type, element.key, element.ref, element.props);
+          return renderElement(request, task, element.type, element.key, element.ref, element.props, prevThenableState);
         }
 
       case REACT_LAZY_TYPE:
@@ -2208,7 +2198,7 @@ function renderModelDestructive(request, task, parent, parentPropertyName, value
           var payload = value._payload;
           var init = value._init;
           var resolvedModel = init(payload);
-          return renderModelDestructive(request, task, emptyRoot, '', resolvedModel);
+          return renderModelDestructive(request, task, emptyRoot, '', resolvedModel, null);
         }
     }
 
@@ -2510,13 +2500,18 @@ function retryTask(request, task) {
   switchContext(task.context);
 
   try {
-    // Track the root so we know that we have to emit this object even though it
+    // Reset the task's thenable state before continuing, so that if a later
+    // component suspends we can reuse the same task object. If the same
+    // component suspends again, the thenable state will be restored.
+    var prevThenableState = task.thenableState;
+    task.thenableState = null; // Track the root so we know that we have to emit this object even though it
     // already has an ID. This is needed because we might see this object twice
     // in the same toJSON if it is cyclic.
+
     modelRoot = task.model; // We call the destructive form that mutates this task. That way if something
     // suspends again, we can reuse the same task instead of spawning a new one.
 
-    var resolvedModel = renderModelDestructive(request, task, emptyRoot, '', task.model); // Track the root again for the resolved object.
+    var resolvedModel = renderModelDestructive(request, task, emptyRoot, '', task.model, prevThenableState); // Track the root again for the resolved object.
 
     modelRoot = resolvedModel; // If the value is a string, it means it's a terminal value adn we already escaped it
     // We don't need to escape it again so it's not passed the toJSON replacer.

@@ -104,7 +104,7 @@ var assign = Object.assign;
 
 var enableClientRenderFallbackOnTextMismatch = true;
 var enableFormActions = true;
-var enableAsyncActions = true; // Need to remove didTimeout argument from Scheduler before landing
+var enableAsyncActions = true; // Not sure if www still uses this. We don't have a replacement but whatever we
 // Slated for removal in the future (significant effort)
 //
 // These are experiments that didn't work out, and never shipped, but we can't
@@ -127,15 +127,6 @@ var enableLegacyHidden = false; // Enables unstable_avoidThisFallback feature in
 var alwaysThrottleRetries = true;
 var syncLaneExpirationMs = 250;
 var transitionLaneExpirationMs = 5000; // -----------------------------------------------------------------------------
-// Ready for next major.
-//
-// Alias __NEXT_MAJOR__ to true for easier skimming.
-// -----------------------------------------------------------------------------
-
-var __NEXT_MAJOR__ = true; // Not ready to break experimental yet.
-// Remove IE and MsApp specific workarounds for innerHTML
-
-var disableIEWorkarounds = __NEXT_MAJOR__; // Changes the behavior for rendering custom elements in both server rendering
 // Chopping Block
 //
 // Planned feature deprecations and breaking changes. Sorted roughly in order of
@@ -156,7 +147,9 @@ var createRootStrictEffectsByDefault = false;
 // Disable support for comment nodes as React DOM containers. Already disabled
 // in open source, but www codebase still relies on it. Need to remove.
 
-var disableCommentsAsDOMContainers = true;
+var disableCommentsAsDOMContainers = true; // Disable javascript: URL strings in href for XSS protection.
+
+var disableIEWorkarounds = true; // Filter certain DOM attributes (e.g. src, href) if their values are empty
 // Debugging and DevTools
 // -----------------------------------------------------------------------------
 // Adds user timing marks for e.g. state updates, suspense, and work loop stuff,
@@ -8266,10 +8259,7 @@ function scheduleImmediateTask(cb) {
   }
 }
 
-function requestTransitionLane( // This argument isn't used, it's only here to encourage the caller to
-// check that it's inside a transition before calling this function.
-// TODO: Make this non-nullable. Requires a tweak to useOptimistic.
-transition) {
+function requestTransitionLane() {
   // The algorithm for assigning an update to a lane should be stable for all
   // updates at the same priority within the same event. To do this, the
   // inputs to the algorithm must be the same.
@@ -8302,7 +8292,7 @@ var currentEntangledLane = NoLane; // A thenable that resolves when the entangle
 // until the async action scope has completed.
 
 var currentEntangledActionThenable = null;
-function entangleAsyncAction(transition, thenable) {
+function entangleAsyncAction(thenable) {
   // `thenable` is the return value of the async action scope function. Create
   // a combined thenable that resolves once every entangled scope function
   // has finished.
@@ -9249,16 +9239,8 @@ var ReactStrictModeWarnings = {
   };
 }
 
-var ReactCurrentActQueue$2 = ReactSharedInternals.ReactCurrentActQueue;
-
-function getThenablesFromState(state) {
-  {
-    var devState = state;
-    return devState.thenables;
-  }
-} // An error that is thrown (e.g. by `use`) to trigger Suspense. If we
+var ReactCurrentActQueue$2 = ReactSharedInternals.ReactCurrentActQueue; // An error that is thrown (e.g. by `use`) to trigger Suspense. If we
 // detect this is caught by userspace, we'll log a warning in development.
-
 
 var SuspenseException = new Error("Suspense Exception: This is not a real error! It's an implementation " + 'detail of `use` to interrupt the current render. You must either ' + 'rethrow it immediately, or move the `use` call outside of the ' + '`try/catch` block. Capturing without rethrowing will lead to ' + 'unexpected behavior.\n\n' + 'To handle async errors, wrap your component in an error boundary, or ' + "call the promise's `.catch` method and pass the result to `use`");
 var SuspenseyCommitException = new Error('Suspense Exception: This is not a real error, and should not leak into ' + "userspace. If you're seeing this, it's likely a bug in React."); // This is a noop thenable that we use to trigger a fallback in throwException.
@@ -9276,12 +9258,7 @@ var noopSuspenseyCommitThenable = {
 function createThenableState() {
   // The ThenableState is created the first time a component suspends. If it
   // suspends again, we'll reuse the same state.
-  {
-    return {
-      didWarnAboutUncachedPromise: false,
-      thenables: []
-    };
-  }
+  return [];
 }
 function isThenableResolved(thenable) {
   var status = thenable.status;
@@ -9295,42 +9272,16 @@ function trackUsedThenable(thenableState, thenable, index) {
     ReactCurrentActQueue$2.didUsePromise = true;
   }
 
-  var trackedThenables = getThenablesFromState(thenableState);
-  var previous = trackedThenables[index];
+  var previous = thenableState[index];
 
   if (previous === undefined) {
-    trackedThenables.push(thenable);
+    thenableState.push(thenable);
   } else {
     if (previous !== thenable) {
       // Reuse the previous thenable, and drop the new one. We can assume
       // they represent the same value, because components are idempotent.
-      {
-        var thenableStateDev = thenableState;
-
-        if (!thenableStateDev.didWarnAboutUncachedPromise) {
-          // We should only warn the first time an uncached thenable is
-          // discovered per component, because if there are multiple, the
-          // subsequent ones are likely derived from the first.
-          //
-          // We track this on the thenableState instead of deduping using the
-          // component name like we usually do, because in the case of a
-          // promise-as-React-node, the owner component is likely different from
-          // the parent that's currently being reconciled. We'd have to track
-          // the owner using state, which we're trying to move away from. Though
-          // since this is dev-only, maybe that'd be OK.
-          //
-          // However, another benefit of doing it this way is we might
-          // eventually have a thenableState per memo/Forget boundary instead
-          // of per component, so this would allow us to have more
-          // granular warnings.
-          thenableStateDev.didWarnAboutUncachedPromise = true; // TODO: This warning should link to a corresponding docs page.
-
-          error('A component was suspended by an uncached promise. Creating ' + 'promises inside a Client Component or hook is not yet ' + 'supported, except via a Suspense-compatible library or framework.');
-        }
-      } // Avoid an unhandled rejection errors for the Promises that we'll
+      // Avoid an unhandled rejection errors for the Promises that we'll
       // intentionally ignore.
-
-
       thenable.then(noop$2, noop$2);
       thenable = previous;
     }
@@ -11080,7 +11031,7 @@ function warnOnHookMismatchInDev(currentHookName) {
   }
 }
 
-function warnIfAsyncClientComponent(Component) {
+function warnIfAsyncClientComponent(Component, componentDoesIncludeHooks) {
   {
     // This dev-only check only works for detecting native async functions,
     // not transpiled ones. There's also a prod check that we use to prevent
@@ -11091,13 +11042,32 @@ function warnIfAsyncClientComponent(Component) {
     Object.prototype.toString.call(Component) === '[object AsyncFunction]';
 
     if (isAsyncFunction) {
-      // Encountered an async Client Component. This is not yet supported.
+      // Encountered an async Client Component. This is not yet supported,
+      // except in certain constrained cases, like during a route navigation.
       var componentName = getComponentNameFromFiber(currentlyRenderingFiber$1);
 
       if (!didWarnAboutAsyncClientComponent.has(componentName)) {
-        didWarnAboutAsyncClientComponent.add(componentName);
+        didWarnAboutAsyncClientComponent.add(componentName); // Check if this is a sync update. We use the "root" render lanes here
+        // because the "subtree" render lanes may include additional entangled
+        // lanes related to revealing previously hidden content.
 
-        error('async/await is not yet supported in Client Components, only ' + 'Server Components. This error is often caused by accidentally ' + "adding `'use client'` to a module that was originally written " + 'for the server.');
+        var root = getWorkInProgressRoot();
+        var rootRenderLanes = getWorkInProgressRootRenderLanes();
+
+        if (root !== null && includesBlockingLane(root, rootRenderLanes)) {
+          error('async/await is not yet supported in Client Components, only ' + 'Server Components. This error is often caused by accidentally ' + "adding `'use client'` to a module that was originally written " + 'for the server.');
+        } else {
+          // This is a concurrent (Transition, Retry, etc) render. We don't
+          // warn in these cases.
+          //
+          // However, Async Components are forbidden to include hooks, even
+          // during a transition, so let's check for that here.
+          //
+          // TODO: Add a corresponding warning to Server Components runtime.
+          if (componentDoesIncludeHooks) {
+            error('Hooks are not supported inside an async component. This ' + "error is often caused by accidentally adding `'use client'` " + 'to a module that was originally written for the server.');
+          }
+        }
       }
     }
   }
@@ -11153,7 +11123,6 @@ function renderWithHooks(current, workInProgress, Component, props, secondArg, n
     hookTypesUpdateIndexDev = -1; // Used for hot reloading:
 
     ignorePreviousDependencies = current !== null && current.type !== workInProgress.type;
-    warnIfAsyncClientComponent(Component);
   }
 
   workInProgress.memoizedState = null;
@@ -11235,13 +11204,15 @@ function renderWithHooks(current, workInProgress, Component, props, secondArg, n
     }
   }
 
-  finishRenderingHooks(current, workInProgress);
+  finishRenderingHooks(current, workInProgress, Component);
   return children;
 }
 
 function finishRenderingHooks(current, workInProgress, Component) {
   {
     workInProgress._debugHookTypes = hookTypesDev;
+    var componentDoesIncludeHooks = workInProgressHook !== null || thenableIndexCounter !== 0;
+    warnIfAsyncClientComponent(Component, componentDoesIncludeHooks);
   } // We can assume the previous dispatcher is always this one, since we set it
   // at the beginning of the render phase and there's no re-entrance.
 
@@ -11314,7 +11285,7 @@ function replaySuspendedComponentWithHooks(current, workInProgress, Component, p
   }
 
   var children = renderWithHooksAgain(workInProgress, Component, props, secondArg);
-  finishRenderingHooks(current, workInProgress);
+  finishRenderingHooks(current, workInProgress, Component);
   return children;
 }
 
@@ -11800,7 +11771,14 @@ function updateReducerImpl(hook, current, reducer) {
         markSkippedUpdateLanes(updateLane);
       } else {
         // This update does have sufficient priority.
-        // Check if this is an optimistic update.
+        // Check if this update is part of a pending async action. If so,
+        // we'll need to suspend until the action has finished, so that it's
+        // batched together with future updates in the same action.
+        if (updateLane !== NoLane && updateLane === peekEntangledActionLane()) {
+          didReadFromEntangledAsyncAction = true;
+        } // Check if this is an optimistic update.
+
+
         var revertLane = update.revertLane;
 
         if (revertLane === NoLane) {
@@ -11820,13 +11798,6 @@ function updateReducerImpl(hook, current, reducer) {
               next: null
             };
             newBaseQueueLast = newBaseQueueLast.next = _clone;
-          } // Check if this update is part of a pending async action. If so,
-          // we'll need to suspend until the action has finished, so that it's
-          // batched together with future updates in the same action.
-
-
-          if (updateLane === peekEntangledActionLane()) {
-            didReadFromEntangledAsyncAction = true;
           }
         } else {
           // This is an optimistic update. If the "revert" priority is
@@ -11837,14 +11808,7 @@ function updateReducerImpl(hook, current, reducer) {
             // The transition that this optimistic update is associated with
             // has finished. Pretend the update doesn't exist by skipping
             // over it.
-            update = update.next; // Check if this update is part of a pending async action. If so,
-            // we'll need to suspend until the action has finished, so that it's
-            // batched together with future updates in the same action.
-
-            if (revertLane === peekEntangledActionLane()) {
-              didReadFromEntangledAsyncAction = true;
-            }
-
+            update = update.next;
             continue;
           } else {
             var _clone2 = {
@@ -12339,10 +12303,8 @@ function runFormStateAction(actionQueue, setState, payload) {
   var prevState = actionQueue.state; // This is a fork of startTransition
 
   var prevTransition = ReactCurrentBatchConfig$3.transition;
-  var currentTransition = {
-    _callbacks: new Set()
-  };
-  ReactCurrentBatchConfig$3.transition = currentTransition;
+  ReactCurrentBatchConfig$3.transition = {};
+  var currentTransition = ReactCurrentBatchConfig$3.transition;
 
   {
     ReactCurrentBatchConfig$3.transition._updatedFibers = new Set();
@@ -12353,8 +12315,7 @@ function runFormStateAction(actionQueue, setState, payload) {
 
     if (returnValue !== null && typeof returnValue === 'object' && // $FlowFixMe[method-unbinding]
     typeof returnValue.then === 'function') {
-      var thenable = returnValue;
-      notifyTransitionCallbacks(currentTransition, thenable); // Attach a listener to read the return state of the action. As soon as
+      var thenable = returnValue; // Attach a listener to read the return state of the action. As soon as
       // this resolves, we can run the next action in the sequence.
 
       thenable.then(function (nextState) {
@@ -12363,6 +12324,7 @@ function runFormStateAction(actionQueue, setState, payload) {
       }, function () {
         return finishRunningFormStateAction(actionQueue, setState);
       });
+      entangleAsyncAction(thenable);
       setState(thenable);
     } else {
       setState(returnValue);
@@ -12922,9 +12884,7 @@ function startTransition(fiber, queue, pendingState, finishedState, callback, op
   var previousPriority = getCurrentUpdatePriority();
   setCurrentUpdatePriority(higherEventPriority(previousPriority, ContinuousEventPriority));
   var prevTransition = ReactCurrentBatchConfig$3.transition;
-  var currentTransition = {
-    _callbacks: new Set()
-  };
+  var currentTransition = {};
 
   {
     // We don't really need to use an optimistic update here, because we
@@ -12954,7 +12914,7 @@ function startTransition(fiber, queue, pendingState, finishedState, callback, op
 
       if (returnValue !== null && typeof returnValue === 'object' && typeof returnValue.then === 'function') {
         var thenable = returnValue;
-        notifyTransitionCallbacks(currentTransition, thenable); // Create a thenable that resolves to `finishedState` once the async
+        entangleAsyncAction(thenable); // Create a thenable that resolves to `finishedState` once the async
         // action has completed.
 
         var thenableForFinishedState = chainThenableValue(thenable, finishedState);
@@ -13290,10 +13250,8 @@ function dispatchSetState(fiber, queue, action) {
 }
 
 function dispatchOptimisticSetState(fiber, throwIfDuringRender, queue, action) {
-  var transition = requestCurrentTransition();
-
   {
-    if (transition === null) {
+    if (ReactCurrentBatchConfig$3.transition === null) {
       // An optimistic update occurred, but startTransition is not on the stack.
       // There are two likely scenarios.
       // One possibility is that the optimistic update is triggered by a regular
@@ -19434,30 +19392,9 @@ function popCacheProvider(workInProgress, cache) {
 }
 
 var ReactCurrentBatchConfig$2 = ReactSharedInternals.ReactCurrentBatchConfig;
+var NoTransition = null;
 function requestCurrentTransition() {
-  var transition = ReactCurrentBatchConfig$2.transition;
-
-  if (transition !== null) {
-    // Whenever a transition update is scheduled, register a callback on the
-    // transition object so we can get the return value of the scope function.
-    transition._callbacks.add(handleAsyncAction);
-  }
-
-  return transition;
-}
-
-function handleAsyncAction(transition, thenable) {
-  {
-    // This is an async action.
-    entangleAsyncAction(transition, thenable);
-  }
-}
-
-function notifyTransitionCallbacks(transition, returnValue) {
-  var callbacks = transition._callbacks;
-  callbacks.forEach(function (callback) {
-    return callback(transition, returnValue);
-  });
+  return ReactCurrentBatchConfig$2.transition;
 } // When retrying a Suspense/Offscreen boundary, we restore the cache that was
 // used during the previous render by placing it here, on the stack.
 
@@ -25161,17 +25098,17 @@ function requestUpdateLane(fiber) {
     return pickArbitraryLane(workInProgressRootRenderLanes);
   }
 
-  var transition = requestCurrentTransition();
+  var isTransition = requestCurrentTransition() !== NoTransition;
 
-  if (transition !== null) {
-    {
-      var batchConfigTransition = ReactCurrentBatchConfig$1.transition;
+  if (isTransition) {
+    if (ReactCurrentBatchConfig$1.transition !== null) {
+      var transition = ReactCurrentBatchConfig$1.transition;
 
-      if (!batchConfigTransition._updatedFibers) {
-        batchConfigTransition._updatedFibers = new Set();
+      if (!transition._updatedFibers) {
+        transition._updatedFibers = new Set();
       }
 
-      batchConfigTransition._updatedFibers.add(fiber);
+      transition._updatedFibers.add(fiber);
     }
 
     var actionScopeLane = peekEntangledActionLane();
@@ -25238,7 +25175,7 @@ function requestDeferredLane() {
       workInProgressDeferredLane = OffscreenLane;
     } else {
       // Everything else is spawned as a transition.
-      workInProgressDeferredLane = claimNextTransitionLane();
+      workInProgressDeferredLane = requestTransitionLane();
     }
   } // Mark the parent Suspense boundary so it knows to spawn the deferred lane.
 
@@ -29063,7 +29000,7 @@ identifierPrefix, onRecoverableError, transitionCallbacks, formState) {
   return root;
 }
 
-var ReactVersion = '18.3.0-experimental-1219d57fc-20240201';
+var ReactVersion = '18.3.0-experimental-b123b9c4f-20240125';
 
 function createPortal$1(children, containerInfo, // TODO: figure out the API for cross-renderer implementation.
 implementation) {
@@ -33724,8 +33661,7 @@ function setProp(domElement, tag, key, value, props, prevValue) {
     case 'href':
       {
         {
-          if (value === '' && // <a href=""> is fine for "reload" links.
-          !(tag === 'a' && key === 'href')) {
+          if (value === '') {
             {
               if (key === 'src') {
                 error('An empty string ("") was passed to the %s attribute. ' + 'This may cause the browser to download the whole page again over the network. ' + 'To fix this, either do not render the element at all ' + 'or pass null to %s instead of an empty string.', key, key);
@@ -35600,8 +35536,7 @@ function diffHydratedGenericElement(domElement, tag, props, hostContext, extraAt
       case 'src':
       case 'href':
         {
-          if (value === '' && // <a href=""> is fine for "reload" links.
-          !(tag === 'a' && propKey === 'href')) {
+          if (value === '') {
             {
               if (propKey === 'src') {
                 error('An empty string ("") was passed to the %s attribute. ' + 'This may cause the browser to download the whole page again over the network. ' + 'To fix this, either do not render the element at all ' + 'or pass null to %s instead of an empty string.', propKey, propKey);
@@ -38662,16 +38597,10 @@ function onUnsuspend() {
       unsuspend();
     }
   }
-} // We use a value that is type distinct from precedence to track which one is last.
-// This ensures there is no collision with user defined precedences. Normally we would
-// just track this in module scope but since the precedences are tracked per HoistableRoot
-// we need to associate it to something other than a global scope hence why we try to
-// colocate it with the map of precedences in the first place
-
-
-var LAST_PRECEDENCE = null; // This is typecast to non-null because it will always be set before read.
+} // This is typecast to non-null because it will always be set before read.
 // it is important that this not be used except when the stack guarantees it exists.
 // Currentlyt his is only during insertSuspendedStylesheet.
+
 
 var precedencesByRoot = null;
 
@@ -38716,26 +38645,26 @@ function insertStylesheetIntoRoot(root, resource, map) {
       if (node.nodeName === 'link' || // We omit style tags with media="not all" because they are not in the right position
       // and will be hoisted by the Fizz runtime imminently.
       node.getAttribute('media') !== 'not all') {
-        precedences.set(node.dataset.precedence, node);
+        precedences.set('p' + node.dataset.precedence, node);
         last = node;
       }
     }
 
     if (last) {
-      precedences.set(LAST_PRECEDENCE, last);
+      precedences.set('last', last);
     }
   } else {
-    last = precedences.get(LAST_PRECEDENCE);
+    last = precedences.get('last');
   } // We only call this after we have constructed an instance so we assume it here
 
 
   var instance = resource.instance; // We will always have a precedence for stylesheet instances
 
   var precedence = instance.getAttribute('data-precedence');
-  var prior = precedences.get(precedence) || last;
+  var prior = precedences.get('p' + precedence) || last;
 
   if (prior === last) {
-    precedences.set(LAST_PRECEDENCE, instance);
+    precedences.set('last', instance);
   }
 
   precedences.set(precedence, instance);

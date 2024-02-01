@@ -549,6 +549,9 @@ function ReactServerEntrypoint({
     formState,
     nonce
   )
+  console.log('reactServerResponse', reactServerResponse)
+  const usedResponse = React.use(reactServerResponse)
+  console.log('usedResponse', usedResponse)
   return React.use(reactServerResponse)
 }
 
@@ -905,6 +908,7 @@ async function renderToHTMLOrFlightImpl(
               nonce={nonce}
             />
           </ServerInsertedHTMLProvider>
+          <div>foo</div>
         </HeadManagerContext.Provider>
       )
 

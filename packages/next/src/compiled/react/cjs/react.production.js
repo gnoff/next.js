@@ -10,7 +10,7 @@
 
 'use strict';
 
-var ReactVersion = '18.3.0-canary-1219d57fc-20240201';
+var ReactVersion = '18.3.0-canary-b123b9c4f-20240125';
 
 // ATTENTION
 // When adding new symbols to this file,
@@ -953,43 +953,15 @@ function useOptimistic(passthrough, reducer) {
 }
 
 function startTransition(scope, options) {
-  const prevTransition = ReactCurrentBatchConfig.transition; // Each renderer registers a callback to receive the return value of
-  // the scope function. This is used to implement async actions.
+  const prevTransition = ReactCurrentBatchConfig.transition;
+  ReactCurrentBatchConfig.transition = {};
 
-  const callbacks = new Set();
-  const transition = {
-    _callbacks: callbacks
-  };
-  ReactCurrentBatchConfig.transition = transition;
-  const currentTransition = ReactCurrentBatchConfig.transition;
-
-  {
-    try {
-      const returnValue = scope();
-
-      if (typeof returnValue === 'object' && returnValue !== null && typeof returnValue.then === 'function') {
-        callbacks.forEach(callback => callback(currentTransition, returnValue));
-        returnValue.then(noop, onError);
-      }
-    } catch (error) {
-      onError(error);
-    } finally {
-      ReactCurrentBatchConfig.transition = prevTransition;
-    }
+  try {
+    scope();
+  } finally {
+    ReactCurrentBatchConfig.transition = prevTransition;
   }
 }
-
-function noop() {} // Use reportError, if it exists. Otherwise console.error. This is the same as
-// the default for onRecoverableError.
-
-
-const onError = typeof reportError === 'function' ? // In modern browsers, reportError will dispatch an error event,
-// emulating an uncaught JavaScript error.
-reportError : error => {
-  // In older browsers and test environments, fallback to console.error.
-  // eslint-disable-next-line react-internal/no-production-logging
-  console['error'](error);
-};
 
 function act(callback) {
   {

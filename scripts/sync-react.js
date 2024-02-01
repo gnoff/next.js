@@ -51,6 +51,8 @@ Or, run this command with no arguments to use the most recently published versio
     )
   }
 
+  console.log('newVersionInfo', newVersionInfo)
+
   const cwd = process.cwd()
   const pkgJson = JSON.parse(
     await fsp.readFile(path.join(cwd, 'package.json'), 'utf-8')
@@ -67,22 +69,41 @@ Or, run this command with no arguments to use the most recently published versio
     )
   }
 
-  const {
+  let {
     sha: newSha,
     releaseLabel: newReleaseLabel,
     dateString: newDateString,
   } = newVersionInfo
-  const {
+  // When running with a pinned version the sync will pass the version in for both canary
+  // and experimental but will use canary as the label for both which is wrong. this just
+  // overrides the label to experimental when the channel is experimental
+  // This was not a problem for when you don't pass a version because the version info is grabbed
+  // from npm which has the right label based on the channel being queried for the version
+  // TODO refactor this
+  if (useExperimental) {
+    newReleaseLabel = 'experimental'
+  }
+  console.log('======== newReleaseLabel', newReleaseLabel)
+  let {
     sha: baseSha,
     releaseLabel: baseReleaseLabel,
     dateString: baseDateString,
   } = baseVersionInfo
+  // When running with a pinned version the sync will pass the version in for both canary
+  // and experimental but will use canary as the label for both which is wrong. this just
+  // overrides the label to experimental when the channel is experimental
+  // This was not a problem for when you don't pass a version because the version info is grabbed
+  // from npm which has the right label based on the channel being queried for the version
+  // TODO refactor this
+  if (useExperimental) {
+    baseReleaseLabel = 'experimental'
+  }
 
   console.log(`Updating "react@${channel}" to ${newSha}...\n`)
-  if (newSha === baseSha) {
-    console.log('Already up to date.')
-    return
-  }
+  // if (newSha === baseSha) {
+  //   console.log('Already up to date.')
+  //   return
+  // }
 
   for (const [dep, version] of Object.entries(devDependencies)) {
     if (version.endsWith(`${baseReleaseLabel}-${baseSha}-${baseDateString}`)) {
@@ -90,6 +111,8 @@ Or, run this command with no arguments to use the most recently published versio
         `${baseReleaseLabel}-${baseSha}-${baseDateString}`,
         `${newReleaseLabel}-${newSha}-${newDateString}`
       )
+
+      console.log('devDepenedencies', devDependencies[dep])
     }
   }
   await fsp.writeFile(

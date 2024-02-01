@@ -23,7 +23,7 @@ if (
 ) {
   __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(new Error());
 }
-          var ReactVersion = '18.3.0-canary-1219d57fc-20240201';
+          var ReactVersion = '18.3.0-canary-b123b9c4f-20240125';
 
 // ATTENTION
 // When adding new symbols to this file,
@@ -2567,64 +2567,32 @@ function useOptimistic(passthrough, reducer) {
 }
 
 function startTransition(scope, options) {
-  var prevTransition = ReactCurrentBatchConfig.transition; // Each renderer registers a callback to receive the return value of
-  // the scope function. This is used to implement async actions.
-
-  var callbacks = new Set();
-  var transition = {
-    _callbacks: callbacks
-  };
-  ReactCurrentBatchConfig.transition = transition;
+  var prevTransition = ReactCurrentBatchConfig.transition;
+  ReactCurrentBatchConfig.transition = {};
   var currentTransition = ReactCurrentBatchConfig.transition;
 
   {
     ReactCurrentBatchConfig.transition._updatedFibers = new Set();
   }
 
-  {
-    try {
-      var returnValue = scope();
+  try {
+    scope();
+  } finally {
+    ReactCurrentBatchConfig.transition = prevTransition;
 
-      if (typeof returnValue === 'object' && returnValue !== null && typeof returnValue.then === 'function') {
-        callbacks.forEach(function (callback) {
-          return callback(currentTransition, returnValue);
-        });
-        returnValue.then(noop, onError);
-      }
-    } catch (error) {
-      onError(error);
-    } finally {
-      warnAboutTransitionSubscriptions(prevTransition, currentTransition);
-      ReactCurrentBatchConfig.transition = prevTransition;
-    }
-  }
-}
+    {
+      if (prevTransition === null && currentTransition._updatedFibers) {
+        var updatedFibersCount = currentTransition._updatedFibers.size;
 
-function warnAboutTransitionSubscriptions(prevTransition, currentTransition) {
-  {
-    if (prevTransition === null && currentTransition._updatedFibers) {
-      var updatedFibersCount = currentTransition._updatedFibers.size;
+        currentTransition._updatedFibers.clear();
 
-      currentTransition._updatedFibers.clear();
-
-      if (updatedFibersCount > 10) {
-        warn('Detected a large number of updates inside startTransition. ' + 'If this is due to a subscription please re-write it to use React provided hooks. ' + 'Otherwise concurrent mode guarantees are off the table.');
+        if (updatedFibersCount > 10) {
+          warn('Detected a large number of updates inside startTransition. ' + 'If this is due to a subscription please re-write it to use React provided hooks. ' + 'Otherwise concurrent mode guarantees are off the table.');
+        }
       }
     }
   }
 }
-
-function noop() {} // Use reportError, if it exists. Otherwise console.error. This is the same as
-// the default for onRecoverableError.
-
-
-var onError = typeof reportError === 'function' ? // In modern browsers, reportError will dispatch an error event,
-// emulating an uncaught JavaScript error.
-reportError : function (error) {
-  // In older browsers and test environments, fallback to console.error.
-  // eslint-disable-next-line react-internal/no-production-logging
-  console['error'](error);
-};
 
 var didWarnAboutMessageChannel = false;
 var enqueueTaskImpl = null;

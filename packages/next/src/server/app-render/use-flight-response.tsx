@@ -86,6 +86,7 @@ export function useFlightResponse(
     },
     nonce,
   })
+  console.log('res', res)
   flightResponses.set(flightStream, res)
 
   pipeFlightDataToInlinedStream(forwardStream, writable, nonce, formState)

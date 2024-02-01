@@ -56,7 +56,7 @@ const assign = Object.assign;
 
 const enableClientRenderFallbackOnTextMismatch = true;
 const enableFormActions = true;
-const enableAsyncActions = true; // Need to remove didTimeout argument from Scheduler before landing
+const enableAsyncActions = true; // Not sure if www still uses this. We don't have a replacement but whatever we
 // Slated for removal in the future (significant effort)
 //
 // These are experiments that didn't work out, and never shipped, but we can't
@@ -99,7 +99,7 @@ const createRootStrictEffectsByDefault = false;
 // Disable support for comment nodes as React DOM containers. Already disabled
 // in open source, but www codebase still relies on it. Need to remove.
 
-const disableCommentsAsDOMContainers = true;
+const disableCommentsAsDOMContainers = true; // Disable javascript: URL strings in href for XSS protection.
 // Debugging and DevTools
 // -----------------------------------------------------------------------------
 // Adds user timing marks for e.g. state updates, suspense, and work loop stuff,
@@ -4846,10 +4846,7 @@ function scheduleImmediateTask(cb) {
   }
 }
 
-function requestTransitionLane( // This argument isn't used, it's only here to encourage the caller to
-// check that it's inside a transition before calling this function.
-// TODO: Make this non-nullable. Requires a tweak to useOptimistic.
-transition) {
+function requestTransitionLane() {
   // The algorithm for assigning an update to a lane should be stable for all
   // updates at the same priority within the same event. To do this, the
   // inputs to the algorithm must be the same.
@@ -4882,7 +4879,7 @@ let currentEntangledLane = NoLane; // A thenable that resolves when the entangle
 // until the async action scope has completed.
 
 let currentEntangledActionThenable = null;
-function entangleAsyncAction(transition, thenable) {
+function entangleAsyncAction(thenable) {
   // `thenable` is the return value of the async action scope function. Create
   // a combined thenable that resolves once every entangled scope function
   // has finished.
@@ -5533,14 +5530,7 @@ function shallowEqual(objA, objB) {
   return true;
 }
 
-function getThenablesFromState(state) {
-  {
-    const prodState = state;
-    return prodState;
-  }
-} // An error that is thrown (e.g. by `use`) to trigger Suspense. If we
 // detect this is caught by userspace, we'll log a warning in development.
-
 
 const SuspenseException = Error(formatProdErrorMessage(460));
 const SuspenseyCommitException = Error(formatProdErrorMessage(474)); // This is a noop thenable that we use to trigger a fallback in throwException.
@@ -5556,9 +5546,7 @@ const noopSuspenseyCommitThenable = {
 function createThenableState() {
   // The ThenableState is created the first time a component suspends. If it
   // suspends again, we'll reuse the same state.
-  {
-    return [];
-  }
+  return [];
 }
 function isThenableResolved(thenable) {
   const status = thenable.status;
@@ -5569,16 +5557,16 @@ function noop$2() {}
 
 function trackUsedThenable(thenableState, thenable, index) {
 
-  const trackedThenables = getThenablesFromState(thenableState);
-  const previous = trackedThenables[index];
+  const previous = thenableState[index];
 
   if (previous === undefined) {
-    trackedThenables.push(thenable);
+    thenableState.push(thenable);
   } else {
     if (previous !== thenable) {
+      // Reuse the previous thenable, and drop the new one. We can assume
+      // they represent the same value, because components are idempotent.
+      // Avoid an unhandled rejection errors for the Promises that we'll
       // intentionally ignore.
-
-
       thenable.then(noop$2, noop$2);
       thenable = previous;
     }
@@ -7541,7 +7529,14 @@ function updateReducerImpl(hook, current, reducer) {
         markSkippedUpdateLanes(updateLane);
       } else {
         // This update does have sufficient priority.
-        // Check if this is an optimistic update.
+        // Check if this update is part of a pending async action. If so,
+        // we'll need to suspend until the action has finished, so that it's
+        // batched together with future updates in the same action.
+        if (updateLane !== NoLane && updateLane === peekEntangledActionLane()) {
+          didReadFromEntangledAsyncAction = true;
+        } // Check if this is an optimistic update.
+
+
         const revertLane = update.revertLane;
 
         if (revertLane === NoLane) {
@@ -7561,13 +7556,6 @@ function updateReducerImpl(hook, current, reducer) {
               next: null
             };
             newBaseQueueLast = newBaseQueueLast.next = clone;
-          } // Check if this update is part of a pending async action. If so,
-          // we'll need to suspend until the action has finished, so that it's
-          // batched together with future updates in the same action.
-
-
-          if (updateLane === peekEntangledActionLane()) {
-            didReadFromEntangledAsyncAction = true;
           }
         } else {
           // This is an optimistic update. If the "revert" priority is
@@ -7578,14 +7566,7 @@ function updateReducerImpl(hook, current, reducer) {
             // The transition that this optimistic update is associated with
             // has finished. Pretend the update doesn't exist by skipping
             // over it.
-            update = update.next; // Check if this update is part of a pending async action. If so,
-            // we'll need to suspend until the action has finished, so that it's
-            // batched together with future updates in the same action.
-
-            if (revertLane === peekEntangledActionLane()) {
-              didReadFromEntangledAsyncAction = true;
-            }
-
+            update = update.next;
             continue;
           } else {
             const clone = {
@@ -8046,24 +8027,21 @@ function runFormStateAction(actionQueue, setState, payload) {
   const prevState = actionQueue.state; // This is a fork of startTransition
 
   const prevTransition = ReactCurrentBatchConfig$3.transition;
-  const currentTransition = {
-    _callbacks: new Set()
-  };
-  ReactCurrentBatchConfig$3.transition = currentTransition;
+  ReactCurrentBatchConfig$3.transition = {};
 
   try {
     const returnValue = action(prevState, payload);
 
     if (returnValue !== null && typeof returnValue === 'object' && // $FlowFixMe[method-unbinding]
     typeof returnValue.then === 'function') {
-      const thenable = returnValue;
-      notifyTransitionCallbacks(currentTransition, thenable); // Attach a listener to read the return state of the action. As soon as
+      const thenable = returnValue; // Attach a listener to read the return state of the action. As soon as
       // this resolves, we can run the next action in the sequence.
 
       thenable.then(nextState => {
         actionQueue.state = nextState;
         finishRunningFormStateAction(actionQueue, setState);
       }, () => finishRunningFormStateAction(actionQueue, setState));
+      entangleAsyncAction(thenable);
       setState(thenable);
     } else {
       setState(returnValue);
@@ -8585,9 +8563,7 @@ function startTransition(fiber, queue, pendingState, finishedState, callback, op
   const previousPriority = getCurrentUpdatePriority();
   setCurrentUpdatePriority(higherEventPriority(previousPriority, ContinuousEventPriority));
   const prevTransition = ReactCurrentBatchConfig$3.transition;
-  const currentTransition = {
-    _callbacks: new Set()
-  };
+  const currentTransition = {};
 
   {
     // We don't really need to use an optimistic update here, because we
@@ -8613,7 +8589,7 @@ function startTransition(fiber, queue, pendingState, finishedState, callback, op
 
       if (returnValue !== null && typeof returnValue === 'object' && typeof returnValue.then === 'function') {
         const thenable = returnValue;
-        notifyTransitionCallbacks(currentTransition, thenable); // Create a thenable that resolves to `finishedState` once the async
+        entangleAsyncAction(thenable); // Create a thenable that resolves to `finishedState` once the async
         // action has completed.
 
         const thenableForFinishedState = chainThenableValue(thenable, finishedState);
@@ -8913,7 +8889,6 @@ function dispatchSetState(fiber, queue, action) {
 }
 
 function dispatchOptimisticSetState(fiber, throwIfDuringRender, queue, action) {
-  requestCurrentTransition();
 
   const update = {
     // An optimistic update commits synchronously.
@@ -12672,28 +12647,9 @@ function popCacheProvider(workInProgress, cache) {
 }
 
 const ReactCurrentBatchConfig$2 = ReactSharedInternals.ReactCurrentBatchConfig;
+const NoTransition = null;
 function requestCurrentTransition() {
-  const transition = ReactCurrentBatchConfig$2.transition;
-
-  if (transition !== null) {
-    // Whenever a transition update is scheduled, register a callback on the
-    // transition object so we can get the return value of the scope function.
-    transition._callbacks.add(handleAsyncAction);
-  }
-
-  return transition;
-}
-
-function handleAsyncAction(transition, thenable) {
-  {
-    // This is an async action.
-    entangleAsyncAction(transition, thenable);
-  }
-}
-
-function notifyTransitionCallbacks(transition, returnValue) {
-  const callbacks = transition._callbacks;
-  callbacks.forEach(callback => callback(transition, returnValue));
+  return ReactCurrentBatchConfig$2.transition;
 } // When retrying a Suspense/Offscreen boundary, we restore the cache that was
 // used during the previous render by placing it here, on the stack.
 
@@ -17060,9 +17016,9 @@ function requestUpdateLane(fiber) {
     return pickArbitraryLane(workInProgressRootRenderLanes);
   }
 
-  const transition = requestCurrentTransition();
+  const isTransition = requestCurrentTransition() !== NoTransition;
 
-  if (transition !== null) {
+  if (isTransition) {
 
     const actionScopeLane = peekEntangledActionLane();
     return actionScopeLane !== NoLane ? // We're inside an async action scope. Reuse the same lane.
@@ -17128,7 +17084,7 @@ function requestDeferredLane() {
       workInProgressDeferredLane = OffscreenLane;
     } else {
       // Everything else is spawned as a transition.
-      workInProgressDeferredLane = claimNextTransitionLane();
+      workInProgressDeferredLane = requestTransitionLane();
     }
   } // Mark the parent Suspense boundary so it knows to spawn the deferred lane.
 
@@ -19650,7 +19606,7 @@ identifierPrefix, onRecoverableError, transitionCallbacks, formState) {
   return root;
 }
 
-var ReactVersion = '18.3.0-experimental-1219d57fc-20240201';
+var ReactVersion = '18.3.0-experimental-b123b9c4f-20240125';
 
 function createPortal$1(children, containerInfo, // TODO: figure out the API for cross-renderer implementation.
 implementation) {
@@ -23796,8 +23752,7 @@ function setProp(domElement, tag, key, value, props, prevValue) {
     case 'href':
       {
         {
-          if (value === '' && // <a href=""> is fine for "reload" links.
-          !(tag === 'a' && key === 'href')) {
+          if (value === '') {
 
             domElement.removeAttribute(key);
             break;
@@ -27339,16 +27294,10 @@ function onUnsuspend() {
       unsuspend();
     }
   }
-} // We use a value that is type distinct from precedence to track which one is last.
-// This ensures there is no collision with user defined precedences. Normally we would
-// just track this in module scope but since the precedences are tracked per HoistableRoot
-// we need to associate it to something other than a global scope hence why we try to
-// colocate it with the map of precedences in the first place
-
-
-const LAST_PRECEDENCE = null; // This is typecast to non-null because it will always be set before read.
+} // This is typecast to non-null because it will always be set before read.
 // it is important that this not be used except when the stack guarantees it exists.
 // Currentlyt his is only during insertSuspendedStylesheet.
+
 
 let precedencesByRoot = null;
 
@@ -27393,26 +27342,26 @@ function insertStylesheetIntoRoot(root, resource, map) {
       if (node.nodeName === 'link' || // We omit style tags with media="not all" because they are not in the right position
       // and will be hoisted by the Fizz runtime imminently.
       node.getAttribute('media') !== 'not all') {
-        precedences.set(node.dataset.precedence, node);
+        precedences.set('p' + node.dataset.precedence, node);
         last = node;
       }
     }
 
     if (last) {
-      precedences.set(LAST_PRECEDENCE, last);
+      precedences.set('last', last);
     }
   } else {
-    last = precedences.get(LAST_PRECEDENCE);
+    last = precedences.get('last');
   } // We only call this after we have constructed an instance so we assume it here
 
 
   const instance = resource.instance; // We will always have a precedence for stylesheet instances
 
   const precedence = instance.getAttribute('data-precedence');
-  const prior = precedences.get(precedence) || last;
+  const prior = precedences.get('p' + precedence) || last;
 
   if (prior === last) {
-    precedences.set(LAST_PRECEDENCE, instance);
+    precedences.set('last', instance);
   }
 
   precedences.set(precedence, instance);

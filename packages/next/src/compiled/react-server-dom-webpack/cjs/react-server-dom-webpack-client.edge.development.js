@@ -1469,6 +1469,7 @@ function createInitializedTextChunk(response, value) {
 }
 
 function resolveModelChunk(chunk, value) {
+  console.log("resolveModelChunk", chunk, value)
   if (chunk.status !== PENDING) {
     // We already resolved. We didn't expect to see this.
     return;
@@ -1525,8 +1526,12 @@ function initializeModelChunk(chunk) {
   cyclicChunk.value = null;
   cyclicChunk.reason = null;
 
+  const rand = (Math.random() * 1000 | 0).toString(16)
+
   try {
+    console.log(rand, '=== trying to parse', resolvedModel)
     var value = parseModel(chunk._response, resolvedModel);
+    console.log(rand, '=== parsed', value)
 
     if (initializingChunkBlockedModel !== null && initializingChunkBlockedModel.deps > 0) {
       initializingChunkBlockedModel.value = value; // We discovered new dependencies on modules that are not yet resolved.
@@ -1547,10 +1552,12 @@ function initializeModelChunk(chunk) {
       }
     }
   } catch (error) {
+    console.log(rand, '=== catch', error)
     var erroredChunk = chunk;
     erroredChunk.status = ERRORED;
     erroredChunk.reason = error;
   } finally {
+    console.log(rand, '=== finally', chunk.value)
     initializingChunk = prevChunk;
     initializingChunkBlockedModel = prevBlocked;
   }
@@ -1936,8 +1943,10 @@ function resolveModel(response, id, model) {
   var chunk = chunks.get(id);
 
   if (!chunk) {
+    console.log('resolveModel creatResolvedModelChunk', id, model)
     chunks.set(id, createResolvedModelChunk(response, model));
   } else {
+    console.log('resolveModel resolveModelChunk', id, model)
     resolveModelChunk(chunk, model);
   }
 }
@@ -2259,9 +2268,11 @@ function startReadingFromStream(response, stream) {
         value = _ref.value;
 
     if (done) {
+      console.log("DONE")
       close(response);
       return;
     }
+    console.log("VALUE", value)
 
     var buffer = value;
     processBinaryChunk(response, buffer);
