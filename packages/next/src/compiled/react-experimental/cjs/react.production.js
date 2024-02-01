@@ -10,7 +10,7 @@
 
 'use strict';
 
-var ReactVersion = '18.3.0-experimental-60a927d04-20240113';
+var ReactVersion = '18.3.0-experimental-1219d57fc-20240201';
 
 // ATTENTION
 // When adding new symbols to this file,
@@ -463,6 +463,45 @@ function isValidElement(object) {
   return typeof object === 'object' && object !== null && object.$$typeof === REACT_ELEMENT_TYPE;
 }
 
+/**
+ * Keeps track of the current dispatcher.
+ */
+const ReactCurrentDispatcher = {
+  current: null
+};
+
+/**
+ * Keeps track of the current Cache dispatcher.
+ */
+const ReactCurrentCache = {
+  current: null
+};
+
+/**
+ * Keeps track of the current batch's configuration such as how long an update
+ * should suspend for if it needs to.
+ */
+const ReactCurrentBatchConfig = {
+  transition: null
+};
+
+const ContextRegistry = {};
+
+const ReactSharedInternals = {
+  ReactCurrentDispatcher,
+  ReactCurrentCache,
+  ReactCurrentBatchConfig,
+  ReactCurrentOwner
+};
+
+{
+  ReactSharedInternals.ContextRegistry = ContextRegistry;
+}
+
+const createElement = createElement$1;
+const cloneElement = cloneElement$1;
+const createFactory = createFactory$1;
+
 const SEPARATOR = '.';
 const SUBSEPARATOR = ':';
 /**
@@ -825,115 +864,22 @@ function memo(type, compare) {
   return elementType;
 }
 
-/**
- * Keeps track of the current Cache dispatcher.
- */
-const ReactCurrentCache = {
-  current: null
-};
-
-const UNTERMINATED = 0;
-const TERMINATED = 1;
-const ERRORED = 2;
-
-function createCacheRoot() {
-  return new WeakMap();
-}
-
-function createCacheNode() {
-  return {
-    s: UNTERMINATED,
-    // status, represents whether the cached computation returned a value or threw an error
-    v: undefined,
-    // value, either the cached result or an error, depending on s
-    o: null,
-    // object cache, a WeakMap where non-primitive arguments are stored
-    p: null // primitive cache, a regular Map where primitive arguments are stored.
-
-  };
-}
-
 function cache(fn) {
+  // On the client (i.e. not a Server Components environment) `cache` has
+  // no caching behavior. We just return the function as-is.
+  //
+  // We intend to implement client caching in a future major release. In the
+  // meantime, it's only exposed as an API so that Shared Components can use
+  // per-request caching on the server without breaking on the client. But it
+  // does mean they need to be aware of the behavioral difference.
+  //
+  // The rest of the behavior is the same as the server implementation — it
+  // returns a new reference, extra properties like `displayName` are not
+  // preserved, the length of the new function is 0, etc. That way apps can't
+  // accidentally depend on those details.
   return function () {
-    const dispatcher = ReactCurrentCache.current;
-
-    if (!dispatcher) {
-      // If there is no dispatcher, then we treat this as not being cached.
-      // $FlowFixMe[incompatible-call]: We don't want to use rest arguments since we transpile the code.
-      return fn.apply(null, arguments);
-    }
-
-    const fnMap = dispatcher.getCacheForType(createCacheRoot);
-    const fnNode = fnMap.get(fn);
-    let cacheNode;
-
-    if (fnNode === undefined) {
-      cacheNode = createCacheNode();
-      fnMap.set(fn, cacheNode);
-    } else {
-      cacheNode = fnNode;
-    }
-
-    for (let i = 0, l = arguments.length; i < l; i++) {
-      const arg = arguments[i];
-
-      if (typeof arg === 'function' || typeof arg === 'object' && arg !== null) {
-        // Objects go into a WeakMap
-        let objectCache = cacheNode.o;
-
-        if (objectCache === null) {
-          cacheNode.o = objectCache = new WeakMap();
-        }
-
-        const objectNode = objectCache.get(arg);
-
-        if (objectNode === undefined) {
-          cacheNode = createCacheNode();
-          objectCache.set(arg, cacheNode);
-        } else {
-          cacheNode = objectNode;
-        }
-      } else {
-        // Primitives go into a regular Map
-        let primitiveCache = cacheNode.p;
-
-        if (primitiveCache === null) {
-          cacheNode.p = primitiveCache = new Map();
-        }
-
-        const primitiveNode = primitiveCache.get(arg);
-
-        if (primitiveNode === undefined) {
-          cacheNode = createCacheNode();
-          primitiveCache.set(arg, cacheNode);
-        } else {
-          cacheNode = primitiveNode;
-        }
-      }
-    }
-
-    if (cacheNode.s === TERMINATED) {
-      return cacheNode.v;
-    }
-
-    if (cacheNode.s === ERRORED) {
-      throw cacheNode.v;
-    }
-
-    try {
-      // $FlowFixMe[incompatible-call]: We don't want to use rest arguments since we transpile the code.
-      const result = fn.apply(null, arguments);
-      const terminatedNode = cacheNode;
-      terminatedNode.s = TERMINATED;
-      terminatedNode.v = result;
-      return result;
-    } catch (error) {
-      // We store the first error that's thrown and rethrow it.
-      const erroredNode = cacheNode;
-      erroredNode.s = ERRORED;
-      erroredNode.v = error;
-      throw error;
-    }
+    // $FlowFixMe[incompatible-call]: We don't want to use rest arguments since we transpile the code.
+    return fn.apply(null, arguments);
   };
 }
 
@@ -943,13 +889,6 @@ function postpone(reason) {
   postponeInstance.$$typeof = REACT_POSTPONE_TYPE;
   throw postponeInstance;
 }
-
-/**
- * Keeps track of the current dispatcher.
- */
-const ReactCurrentDispatcher = {
-  current: null
-};
 
 function resolveDispatcher() {
   const dispatcher = ReactCurrentDispatcher.current;
@@ -1072,27 +1011,6 @@ function useOptimistic(passthrough, reducer) {
   return dispatcher.useOptimistic(passthrough, reducer);
 }
 
-/**
- * Keeps track of the current batch's configuration such as how long an update
- * should suspend for if it needs to.
- */
-const ReactCurrentBatchConfig = {
-  transition: null
-};
-
-const ContextRegistry = {};
-
-const ReactSharedInternals = {
-  ReactCurrentDispatcher,
-  ReactCurrentCache,
-  ReactCurrentBatchConfig,
-  ReactCurrentOwner
-};
-
-{
-  ReactSharedInternals.ContextRegistry = ContextRegistry;
-}
-
 function createServerContext(globalName, defaultValue) {
 
   let wasDefined = true;
@@ -1145,15 +1063,43 @@ function createServerContext(globalName, defaultValue) {
 }
 
 function startTransition(scope, options) {
-  const prevTransition = ReactCurrentBatchConfig.transition;
-  ReactCurrentBatchConfig.transition = {};
+  const prevTransition = ReactCurrentBatchConfig.transition; // Each renderer registers a callback to receive the return value of
+  // the scope function. This is used to implement async actions.
 
-  try {
-    scope();
-  } finally {
-    ReactCurrentBatchConfig.transition = prevTransition;
+  const callbacks = new Set();
+  const transition = {
+    _callbacks: callbacks
+  };
+  ReactCurrentBatchConfig.transition = transition;
+  const currentTransition = ReactCurrentBatchConfig.transition;
+
+  {
+    try {
+      const returnValue = scope();
+
+      if (typeof returnValue === 'object' && returnValue !== null && typeof returnValue.then === 'function') {
+        callbacks.forEach(callback => callback(currentTransition, returnValue));
+        returnValue.then(noop, onError);
+      }
+    } catch (error) {
+      onError(error);
+    } finally {
+      ReactCurrentBatchConfig.transition = prevTransition;
+    }
   }
 }
+
+function noop() {} // Use reportError, if it exists. Otherwise console.error. This is the same as
+// the default for onRecoverableError.
+
+
+const onError = typeof reportError === 'function' ? // In modern browsers, reportError will dispatch an error event,
+// emulating an uncaught JavaScript error.
+reportError : error => {
+  // In older browsers and test environments, fallback to console.error.
+  // eslint-disable-next-line react-internal/no-production-logging
+  console['error'](error);
+};
 
 function act(callback) {
   {
@@ -1161,9 +1107,6 @@ function act(callback) {
   }
 }
 
-const createElement = createElement$1;
-const cloneElement = cloneElement$1;
-const createFactory = createFactory$1;
 const Children = {
   map: mapChildren,
   forEach: forEachChildren,

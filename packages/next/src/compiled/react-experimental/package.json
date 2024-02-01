@@ -3,7 +3,7 @@
   "main": "index.js",
   "exports": {
     ".": {
-      "react-server": "./react.shared-subset.js",
+      "react-server": "./react.react-server.js",
       "default": "./index.js"
     },
     "./package.json": "./package.json",

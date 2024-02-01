@@ -1,6 +1,6 @@
 /**
  * @license React
- * react.development.js
+ * react.react-server.development.js
  *
  * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
@@ -12,84 +12,13 @@
 
 if (process.env.NODE_ENV !== "production") {
   (function() {
-
-          'use strict';
-
-/* global __REACT_DEVTOOLS_GLOBAL_HOOK__ */
-if (
-  typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== 'undefined' &&
-  typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart ===
-    'function'
-) {
-  __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(new Error());
-}
-          var ReactVersion = '18.3.0-canary-1219d57fc-20240201';
-
-// ATTENTION
-// When adding new symbols to this file,
-// Please consider also adding to 'react-devtools-shared/src/backend/ReactSymbols'
-// The Symbol used to tag the ReactElement-like types.
-var REACT_ELEMENT_TYPE = Symbol.for('react.element');
-var REACT_PORTAL_TYPE = Symbol.for('react.portal');
-var REACT_FRAGMENT_TYPE = Symbol.for('react.fragment');
-var REACT_STRICT_MODE_TYPE = Symbol.for('react.strict_mode');
-var REACT_PROFILER_TYPE = Symbol.for('react.profiler');
-var REACT_PROVIDER_TYPE = Symbol.for('react.provider');
-var REACT_CONTEXT_TYPE = Symbol.for('react.context');
-var REACT_FORWARD_REF_TYPE = Symbol.for('react.forward_ref');
-var REACT_SUSPENSE_TYPE = Symbol.for('react.suspense');
-var REACT_SUSPENSE_LIST_TYPE = Symbol.for('react.suspense_list');
-var REACT_MEMO_TYPE = Symbol.for('react.memo');
-var REACT_LAZY_TYPE = Symbol.for('react.lazy');
-var REACT_OFFSCREEN_TYPE = Symbol.for('react.offscreen');
-var REACT_CACHE_TYPE = Symbol.for('react.cache');
-var MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
-var FAUX_ITERATOR_SYMBOL = '@@iterator';
-function getIteratorFn(maybeIterable) {
-  if (maybeIterable === null || typeof maybeIterable !== 'object') {
-    return null;
-  }
-
-  var maybeIterator = MAYBE_ITERATOR_SYMBOL && maybeIterable[MAYBE_ITERATOR_SYMBOL] || maybeIterable[FAUX_ITERATOR_SYMBOL];
-
-  if (typeof maybeIterator === 'function') {
-    return maybeIterator;
-  }
-
-  return null;
-}
+'use strict';
 
 /**
  * Keeps track of the current dispatcher.
  */
 var ReactCurrentDispatcher$1 = {
   current: null
-};
-
-/**
- * Keeps track of the current Cache dispatcher.
- */
-var ReactCurrentCache = {
-  current: null
-};
-
-/**
- * Keeps track of the current batch's configuration such as how long an update
- * should suspend for if it needs to.
- */
-var ReactCurrentBatchConfig = {
-  transition: null
-};
-
-var ReactCurrentActQueue = {
-  current: null,
-  // Used to reproduce behavior of `batchedUpdates` in legacy mode.
-  isBatchingLegacy: false,
-  didScheduleLegacyUpdate: false,
-  // Tracks whether something called `use` during the current batch of work.
-  // Determines whether we should yield to microtasks to unwrap already resolved
-  // promises without suspending.
-  didUsePromise: false
 };
 
 /**
@@ -145,7 +74,6 @@ function setExtraStackFrame(stack) {
 // -----------------------------------------------------------------------------
 
 var enableScopeAPI = false; // Experimental Create Event Handle API.
-var enableCacheElement = false;
 var enableTransitionTracing = false; // No known bugs, but needs performance testing
 
 var enableLegacyHidden = false; // Enables unstable_avoidThisFallback feature in Fiber
@@ -154,16 +82,19 @@ var enableLegacyHidden = false; // Enables unstable_avoidThisFallback feature in
 
 var enableDebugTracing = false;
 
+var ContextRegistry = {};
+
 var ReactSharedInternals = {
   ReactCurrentDispatcher: ReactCurrentDispatcher$1,
-  ReactCurrentCache: ReactCurrentCache,
-  ReactCurrentBatchConfig: ReactCurrentBatchConfig,
   ReactCurrentOwner: ReactCurrentOwner
 };
 
 {
   ReactSharedInternals.ReactDebugCurrentFrame = ReactDebugCurrentFrame$1;
-  ReactSharedInternals.ReactCurrentActQueue = ReactCurrentActQueue;
+}
+
+{
+  ReactSharedInternals.ContextRegistry = ContextRegistry;
 }
 
 // by calls to these methods by a Babel plugin.
@@ -219,236 +150,201 @@ function printWarning(level, format, args) {
   }
 }
 
-var didWarnStateUpdateForUnmountedComponent = {};
-
-function warnNoop(publicInstance, callerName) {
-  {
-    var _constructor = publicInstance.constructor;
-    var componentName = _constructor && (_constructor.displayName || _constructor.name) || 'ReactClass';
-    var warningKey = componentName + "." + callerName;
-
-    if (didWarnStateUpdateForUnmountedComponent[warningKey]) {
-      return;
-    }
-
-    error("Can't call %s on a component that is not yet mounted. " + 'This is a no-op, but it might indicate a bug in your application. ' + 'Instead, assign to `this.state` directly or define a `state = {};` ' + 'class property with the desired state in the %s component.', callerName, componentName);
-
-    didWarnStateUpdateForUnmountedComponent[warningKey] = true;
-  }
-}
-/**
- * This is the abstract API for an update queue.
- */
-
-
-var ReactNoopUpdateQueue = {
-  /**
-   * Checks whether or not this composite component is mounted.
-   * @param {ReactClass} publicInstance The instance we want to test.
-   * @return {boolean} True if mounted, false otherwise.
-   * @protected
-   * @final
-   */
-  isMounted: function (publicInstance) {
-    return false;
-  },
-
-  /**
-   * Forces an update. This should only be invoked when it is known with
-   * certainty that we are **not** in a DOM transaction.
-   *
-   * You may want to call this when you know that some deeper aspect of the
-   * component's state has changed but `setState` was not called.
-   *
-   * This will not invoke `shouldComponentUpdate`, but it will invoke
-   * `componentWillUpdate` and `componentDidUpdate`.
-   *
-   * @param {ReactClass} publicInstance The instance that should rerender.
-   * @param {?function} callback Called after component is updated.
-   * @param {?string} callerName name of the calling function in the public API.
-   * @internal
-   */
-  enqueueForceUpdate: function (publicInstance, callback, callerName) {
-    warnNoop(publicInstance, 'forceUpdate');
-  },
-
-  /**
-   * Replaces all of the state. Always use this or `setState` to mutate state.
-   * You should treat `this.state` as immutable.
-   *
-   * There is no guarantee that `this.state` will be immediately updated, so
-   * accessing `this.state` after calling this method may return the old value.
-   *
-   * @param {ReactClass} publicInstance The instance that should rerender.
-   * @param {object} completeState Next state.
-   * @param {?function} callback Called after component is updated.
-   * @param {?string} callerName name of the calling function in the public API.
-   * @internal
-   */
-  enqueueReplaceState: function (publicInstance, completeState, callback, callerName) {
-    warnNoop(publicInstance, 'replaceState');
-  },
-
-  /**
-   * Sets a subset of the state. This only exists because _pendingState is
-   * internal. This provides a merging strategy that is not available to deep
-   * properties which is confusing. TODO: Expose pendingState or don't use it
-   * during the merge.
-   *
-   * @param {ReactClass} publicInstance The instance that should rerender.
-   * @param {object} partialState Next partial state to be merged with state.
-   * @param {?function} callback Called after component is updated.
-   * @param {?string} Name of the calling function in the public API.
-   * @internal
-   */
-  enqueueSetState: function (publicInstance, partialState, callback, callerName) {
-    warnNoop(publicInstance, 'setState');
-  }
-};
-
 var assign = Object.assign;
 
-var emptyObject = {};
-
-{
-  Object.freeze(emptyObject);
-}
 /**
- * Base class helpers for the updating state of a component.
+ * Keeps track of the current Cache dispatcher.
  */
+var ReactCurrentCache = {
+  current: null
+};
 
-
-function Component(props, context, updater) {
-  this.props = props;
-  this.context = context; // If a component has string refs, we will assign a different object later.
-
-  this.refs = emptyObject; // We initialize the default updater but the real one gets injected by the
-  // renderer.
-
-  this.updater = updater || ReactNoopUpdateQueue;
+function createFetchCache() {
+  return new Map();
 }
 
-Component.prototype.isReactComponent = {};
-/**
- * Sets a subset of the state. Always use this to mutate
- * state. You should treat `this.state` as immutable.
- *
- * There is no guarantee that `this.state` will be immediately updated, so
- * accessing `this.state` after calling this method may return the old value.
- *
- * There is no guarantee that calls to `setState` will run synchronously,
- * as they may eventually be batched together.  You can provide an optional
- * callback that will be executed when the call to setState is actually
- * completed.
- *
- * When a function is provided to setState, it will be called at some point in
- * the future (not synchronously). It will be called with the up to date
- * component arguments (state, props, context). These values can be different
- * from this.* because your function may be called after receiveProps but before
- * shouldComponentUpdate, and this new state, props, and context will not yet be
- * assigned to this.
- *
- * @param {object|function} partialState Next partial state or function to
- *        produce next partial state to be merged with current state.
- * @param {?function} callback Called after state is updated.
- * @final
- * @protected
- */
+var simpleCacheKey = '["GET",[],null,"follow",null,null,null,null]'; // generateCacheKey(new Request('https://blank'));
 
-Component.prototype.setState = function (partialState, callback) {
-  if (typeof partialState !== 'object' && typeof partialState !== 'function' && partialState != null) {
-    throw new Error('setState(...): takes an object of state variables to update or a ' + 'function which returns an object of state variables.');
-  }
-
-  this.updater.enqueueSetState(this, partialState, callback, 'setState');
-};
-/**
- * Forces an update. This should only be invoked when it is known with
- * certainty that we are **not** in a DOM transaction.
- *
- * You may want to call this when you know that some deeper aspect of the
- * component's state has changed but `setState` was not called.
- *
- * This will not invoke `shouldComponentUpdate`, but it will invoke
- * `componentWillUpdate` and `componentDidUpdate`.
- *
- * @param {?function} callback Called after update is complete.
- * @final
- * @protected
- */
-
-
-Component.prototype.forceUpdate = function (callback) {
-  this.updater.enqueueForceUpdate(this, callback, 'forceUpdate');
-};
-/**
- * Deprecated APIs. These APIs used to exist on classic React classes but since
- * we would like to deprecate them, we're not going to move them over to this
- * modern base class. Instead, we define a getter that warns if it's accessed.
- */
-
+function generateCacheKey(request) {
+  // We pick the fields that goes into the key used to dedupe requests.
+  // We don't include the `cache` field, because we end up using whatever
+  // caching resulted from the first request.
+  // Notably we currently don't consider non-standard (or future) options.
+  // This might not be safe. TODO: warn for non-standard extensions differing.
+  // IF YOU CHANGE THIS UPDATE THE simpleCacheKey ABOVE.
+  return JSON.stringify([request.method, Array.from(request.headers.entries()), request.mode, request.redirect, request.credentials, request.referrer, request.referrerPolicy, request.integrity]);
+}
 
 {
-  var deprecatedAPIs = {
-    isMounted: ['isMounted', 'Instead, make sure to clean up subscriptions and pending requests in ' + 'componentWillUnmount to prevent memory leaks.'],
-    replaceState: ['replaceState', 'Refactor your code to use setState instead (see ' + 'https://github.com/facebook/react/issues/3236).']
-  };
+  if (typeof fetch === 'function') {
+    var originalFetch = fetch;
 
-  var defineDeprecationWarning = function (methodName, info) {
-    Object.defineProperty(Component.prototype, methodName, {
-      get: function () {
-        warn('%s(...) is deprecated in plain JavaScript React classes. %s', info[0], info[1]);
+    var cachedFetch = function fetch(resource, options) {
+      var dispatcher = ReactCurrentCache.current;
 
-        return undefined;
+      if (!dispatcher) {
+        // We're outside a cached scope.
+        return originalFetch(resource, options);
       }
-    });
-  };
 
-  for (var fnName in deprecatedAPIs) {
-    if (deprecatedAPIs.hasOwnProperty(fnName)) {
-      defineDeprecationWarning(fnName, deprecatedAPIs[fnName]);
+      if (options && options.signal && options.signal !== dispatcher.getCacheSignal()) {
+        // If we're passed a signal that is not ours, then we assume that
+        // someone else controls the lifetime of this object and opts out of
+        // caching. It's effectively the opt-out mechanism.
+        // Ideally we should be able to check this on the Request but
+        // it always gets initialized with its own signal so we don't
+        // know if it's supposed to override - unless we also override the
+        // Request constructor.
+        return originalFetch(resource, options);
+      } // Normalize the Request
+
+
+      var url;
+      var cacheKey;
+
+      if (typeof resource === 'string' && !options) {
+        // Fast path.
+        cacheKey = simpleCacheKey;
+        url = resource;
+      } else {
+        // Normalize the request.
+        // if resource is not a string or a URL (its an instance of Request)
+        // then do not instantiate a new Request but instead
+        // reuse the request as to not disturb the body in the event it's a ReadableStream.
+        var request = typeof resource === 'string' || resource instanceof URL ? new Request(resource, options) : resource;
+
+        if (request.method !== 'GET' && request.method !== 'HEAD' || // $FlowFixMe[prop-missing]: keepalive is real
+        request.keepalive) {
+          // We currently don't dedupe requests that might have side-effects. Those
+          // have to be explicitly cached. We assume that the request doesn't have a
+          // body if it's GET or HEAD.
+          // keepalive gets treated the same as if you passed a custom cache signal.
+          return originalFetch(resource, options);
+        }
+
+        cacheKey = generateCacheKey(request);
+        url = request.url;
+      }
+
+      var cache = dispatcher.getCacheForType(createFetchCache);
+      var cacheEntries = cache.get(url);
+      var match;
+
+      if (cacheEntries === undefined) {
+        // We pass the original arguments here in case normalizing the Request
+        // doesn't include all the options in this environment.
+        match = originalFetch(resource, options);
+        cache.set(url, [cacheKey, match]);
+      } else {
+        // We use an array as the inner data structure since it's lighter and
+        // we typically only expect to see one or two entries here.
+        for (var i = 0, l = cacheEntries.length; i < l; i += 2) {
+          var key = cacheEntries[i];
+          var value = cacheEntries[i + 1];
+
+          if (key === cacheKey) {
+            match = value; // I would've preferred a labelled break but lint says no.
+
+            return match.then(function (response) {
+              return response.clone();
+            });
+          }
+        }
+
+        match = originalFetch(resource, options);
+        cacheEntries.push(cacheKey, match);
+      } // We clone the response so that each time you call this you get a new read
+      // of the body so that it can be read multiple times.
+
+
+      return match.then(function (response) {
+        return response.clone();
+      });
+    }; // We don't expect to see any extra properties on fetch but if there are any,
+    // copy them over. Useful for extended fetch environments or mocks.
+
+
+    assign(cachedFetch, originalFetch);
+
+    try {
+      // eslint-disable-next-line no-native-reassign
+      fetch = cachedFetch;
+    } catch (error1) {
+      try {
+        // In case assigning it globally fails, try globalThis instead just in case it exists.
+        globalThis.fetch = cachedFetch;
+      } catch (error2) {
+        // Log even in production just to make sure this is seen if only prod is frozen.
+        // eslint-disable-next-line react-internal/no-production-logging
+        warn('React was unable to patch the fetch() function in this environment. ' + 'Suspensey APIs might not work correctly as a result.');
+      }
     }
   }
 }
 
-function ComponentDummy() {}
+var TaintRegistryObjects$1 = new WeakMap();
+var TaintRegistryValues$1 = new Map(); // Byte lengths of all binary values we've ever seen. We don't both refcounting this.
+// We expect to see only a few lengths here such as the length of token.
 
-ComponentDummy.prototype = Component.prototype;
-/**
- * Convenience component with default shallow equality check for sCU.
- */
+var TaintRegistryByteLengths$1 = new Set(); // When a value is finalized, it means that it has been removed from any global caches.
+// No future requests can get a handle on it but any ongoing requests can still have
+// a handle on it. It's still tainted until that happens.
 
-function PureComponent(props, context, updater) {
-  this.props = props;
-  this.context = context; // If a component has string refs, we will assign a different object later.
+var TaintRegistryPendingRequests$1 = new Set();
 
-  this.refs = emptyObject;
-  this.updater = updater || ReactNoopUpdateQueue;
-}
+var ReactServerSharedInternals = {
+  ReactCurrentCache: ReactCurrentCache
+};
 
-var pureComponentPrototype = PureComponent.prototype = new ComponentDummy();
-pureComponentPrototype.constructor = PureComponent; // Avoid an extra prototype jump for these methods.
-
-assign(pureComponentPrototype, Component.prototype);
-pureComponentPrototype.isPureReactComponent = true;
-
-// an immutable object with a single mutable value
-function createRef() {
-  var refObject = {
-    current: null
-  };
-
-  {
-    Object.seal(refObject);
-  }
-
-  return refObject;
+{
+  ReactServerSharedInternals.TaintRegistryObjects = TaintRegistryObjects$1;
+  ReactServerSharedInternals.TaintRegistryValues = TaintRegistryValues$1;
+  ReactServerSharedInternals.TaintRegistryByteLengths = TaintRegistryByteLengths$1;
+  ReactServerSharedInternals.TaintRegistryPendingRequests = TaintRegistryPendingRequests$1;
 }
 
 var isArrayImpl = Array.isArray; // eslint-disable-next-line no-redeclare
 
 function isArray(a) {
   return isArrayImpl(a);
+}
+
+// ATTENTION
+// When adding new symbols to this file,
+// Please consider also adding to 'react-devtools-shared/src/backend/ReactSymbols'
+// The Symbol used to tag the ReactElement-like types.
+var REACT_ELEMENT_TYPE = Symbol.for('react.element');
+var REACT_PORTAL_TYPE = Symbol.for('react.portal');
+var REACT_FRAGMENT_TYPE = Symbol.for('react.fragment');
+var REACT_STRICT_MODE_TYPE = Symbol.for('react.strict_mode');
+var REACT_PROFILER_TYPE = Symbol.for('react.profiler');
+var REACT_PROVIDER_TYPE = Symbol.for('react.provider');
+var REACT_CONTEXT_TYPE = Symbol.for('react.context');
+var REACT_SERVER_CONTEXT_TYPE = Symbol.for('react.server_context');
+var REACT_FORWARD_REF_TYPE = Symbol.for('react.forward_ref');
+var REACT_SUSPENSE_TYPE = Symbol.for('react.suspense');
+var REACT_SUSPENSE_LIST_TYPE = Symbol.for('react.suspense_list');
+var REACT_MEMO_TYPE = Symbol.for('react.memo');
+var REACT_LAZY_TYPE = Symbol.for('react.lazy');
+var REACT_DEBUG_TRACING_MODE_TYPE = Symbol.for('react.debug_trace_mode');
+var REACT_OFFSCREEN_TYPE = Symbol.for('react.offscreen');
+var REACT_CACHE_TYPE = Symbol.for('react.cache');
+var REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED = Symbol.for('react.default_value');
+var REACT_POSTPONE_TYPE = Symbol.for('react.postpone');
+var MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
+var FAUX_ITERATOR_SYMBOL = '@@iterator';
+function getIteratorFn(maybeIterable) {
+  if (maybeIterable === null || typeof maybeIterable !== 'object') {
+    return null;
+  }
+
+  var maybeIterator = MAYBE_ITERATOR_SYMBOL && maybeIterable[MAYBE_ITERATOR_SYMBOL] || maybeIterable[FAUX_ITERATOR_SYMBOL];
+
+  if (typeof maybeIterator === 'function') {
+    return maybeIterator;
+  }
+
+  return null;
 }
 
 /*
@@ -621,6 +517,12 @@ function getComponentNameFromType(type) {
           } catch (x) {
             return null;
           }
+        }
+
+      case REACT_SERVER_CONTEXT_TYPE:
+        {
+          var context2 = type;
+          return (context2.displayName || context2._globalName) + '.Provider';
         }
 
     }
@@ -986,7 +888,7 @@ function isValidElementType(type) {
   } // Note: typeof might be other than 'symbol' or 'number' (e.g. if it's a polyfill).
 
 
-  if (type === REACT_FRAGMENT_TYPE || type === REACT_PROFILER_TYPE || enableDebugTracing  || type === REACT_STRICT_MODE_TYPE || type === REACT_SUSPENSE_TYPE || type === REACT_SUSPENSE_LIST_TYPE || enableLegacyHidden  || type === REACT_OFFSCREEN_TYPE || enableScopeAPI  || enableCacheElement  || enableTransitionTracing ) {
+  if (type === REACT_FRAGMENT_TYPE || type === REACT_PROFILER_TYPE || enableDebugTracing  || type === REACT_STRICT_MODE_TYPE || type === REACT_SUSPENSE_TYPE || type === REACT_SUSPENSE_LIST_TYPE || enableLegacyHidden  || type === REACT_OFFSCREEN_TYPE || enableScopeAPI  || type === REACT_CACHE_TYPE || enableTransitionTracing ) {
     return true;
   }
 
@@ -1795,34 +1697,6 @@ function createElementWithValidation(type, props, children) {
 
   return element;
 }
-var didWarnAboutDeprecatedCreateFactory = false;
-function createFactoryWithValidation(type) {
-  var validatedFactory = createElementWithValidation.bind(null, type);
-  validatedFactory.type = type;
-
-  {
-    if (!didWarnAboutDeprecatedCreateFactory) {
-      didWarnAboutDeprecatedCreateFactory = true;
-
-      warn('React.createFactory() is deprecated and will be removed in ' + 'a future major release. Consider using JSX ' + 'or use React.createElement() directly instead.');
-    } // Legacy hook: remove it
-
-
-    Object.defineProperty(validatedFactory, 'type', {
-      enumerable: false,
-      get: function () {
-        warn('Factory.type is deprecated. Access the class directly ' + 'before passing it to createFactory.');
-
-        Object.defineProperty(this, 'type', {
-          value: type
-        });
-        return type;
-      }
-    });
-  }
-
-  return validatedFactory;
-}
 function cloneElementWithValidation(element, props, children) {
   var newElement = cloneElement$1.apply(this, arguments);
 
@@ -1836,7 +1710,6 @@ function cloneElementWithValidation(element, props, children) {
 
 var createElement = createElementWithValidation ;
 var cloneElement = cloneElementWithValidation ;
-var createFactory = createFactoryWithValidation ;
 
 var SEPARATOR = '.';
 var SUBSEPARATOR = ':';
@@ -2116,118 +1989,227 @@ function onlyChild(children) {
   return children;
 }
 
-function createContext(defaultValue) {
-  // TODO: Second argument used to be an optional `calculateChangedBits`
-  // function. Warn to reserve for future use?
-  var context = {
-    $$typeof: REACT_CONTEXT_TYPE,
-    // As a workaround to support multiple concurrent renderers, we categorize
-    // some renderers as primary and others as secondary. We only expect
-    // there to be two concurrent renderers at most: React Native (primary) and
-    // Fabric (secondary); React DOM (primary) and React ART (secondary).
-    // Secondary renderers store their context values on separate fields.
-    _currentValue: defaultValue,
-    _currentValue2: defaultValue,
-    // Used to track how many concurrent renderers this context currently
-    // supports within in a single renderer. Such as parallel server rendering.
-    _threadCount: 0,
-    // These are circular
-    Provider: null,
-    Consumer: null,
-    // Add these to use same hidden class in VM as ServerContext
-    _defaultValue: null,
-    _globalName: null
+// an immutable object with a single mutable value
+function createRef() {
+  var refObject = {
+    current: null
   };
-  context.Provider = {
-    $$typeof: REACT_PROVIDER_TYPE,
-    _context: context
-  };
-  var hasWarnedAboutUsingNestedContextConsumers = false;
-  var hasWarnedAboutUsingConsumerProvider = false;
-  var hasWarnedAboutDisplayNameOnConsumer = false;
 
   {
-    // A separate object, but proxies back to the original context object for
-    // backwards compatibility. It has a different $$typeof, so we can properly
-    // warn for the incorrect usage of Context as a Consumer.
-    var Consumer = {
-      $$typeof: REACT_CONTEXT_TYPE,
-      _context: context
-    }; // $FlowFixMe[prop-missing]: Flow complains about not setting a value, which is intentional here
-
-    Object.defineProperties(Consumer, {
-      Provider: {
-        get: function () {
-          if (!hasWarnedAboutUsingConsumerProvider) {
-            hasWarnedAboutUsingConsumerProvider = true;
-
-            error('Rendering <Context.Consumer.Provider> is not supported and will be removed in ' + 'a future major release. Did you mean to render <Context.Provider> instead?');
-          }
-
-          return context.Provider;
-        },
-        set: function (_Provider) {
-          context.Provider = _Provider;
-        }
-      },
-      _currentValue: {
-        get: function () {
-          return context._currentValue;
-        },
-        set: function (_currentValue) {
-          context._currentValue = _currentValue;
-        }
-      },
-      _currentValue2: {
-        get: function () {
-          return context._currentValue2;
-        },
-        set: function (_currentValue2) {
-          context._currentValue2 = _currentValue2;
-        }
-      },
-      _threadCount: {
-        get: function () {
-          return context._threadCount;
-        },
-        set: function (_threadCount) {
-          context._threadCount = _threadCount;
-        }
-      },
-      Consumer: {
-        get: function () {
-          if (!hasWarnedAboutUsingNestedContextConsumers) {
-            hasWarnedAboutUsingNestedContextConsumers = true;
-
-            error('Rendering <Context.Consumer.Consumer> is not supported and will be removed in ' + 'a future major release. Did you mean to render <Context.Consumer> instead?');
-          }
-
-          return context.Consumer;
-        }
-      },
-      displayName: {
-        get: function () {
-          return context.displayName;
-        },
-        set: function (displayName) {
-          if (!hasWarnedAboutDisplayNameOnConsumer) {
-            warn('Setting `displayName` on Context.Consumer has no effect. ' + "You should set it directly on the context with Context.displayName = '%s'.", displayName);
-
-            hasWarnedAboutDisplayNameOnConsumer = true;
-          }
-        }
-      }
-    }); // $FlowFixMe[prop-missing]: Flow complains about missing properties because it doesn't understand defineProperty
-
-    context.Consumer = Consumer;
+    Object.seal(refObject);
   }
 
+  return refObject;
+}
+
+function createServerContext(globalName, defaultValue) {
+
   {
-    context._currentRenderer = null;
-    context._currentRenderer2 = null;
+    error('Server Context is deprecated and will soon be removed. ' + 'It was never documented and we have found it not to be useful ' + 'enough to warrant the downside it imposes on all apps.');
+  }
+
+  var wasDefined = true;
+
+  if (!ContextRegistry[globalName]) {
+    wasDefined = false;
+    var _context = {
+      $$typeof: REACT_SERVER_CONTEXT_TYPE,
+      // As a workaround to support multiple concurrent renderers, we categorize
+      // some renderers as primary and others as secondary. We only expect
+      // there to be two concurrent renderers at most: React Native (primary) and
+      // Fabric (secondary); React DOM (primary) and React ART (secondary).
+      // Secondary renderers store their context values on separate fields.
+      _currentValue: defaultValue,
+      _currentValue2: defaultValue,
+      _defaultValue: defaultValue,
+      // Used to track how many concurrent renderers this context currently
+      // supports within in a single renderer. Such as parallel server rendering.
+      _threadCount: 0,
+      // These are circular
+      Provider: null,
+      Consumer: null,
+      _globalName: globalName
+    };
+    _context.Provider = {
+      $$typeof: REACT_PROVIDER_TYPE,
+      _context: _context
+    };
+
+    {
+      var hasWarnedAboutUsingConsumer;
+      _context._currentRenderer = null;
+      _context._currentRenderer2 = null;
+      Object.defineProperties(_context, {
+        Consumer: {
+          get: function () {
+            if (!hasWarnedAboutUsingConsumer) {
+              error('Consumer pattern is not supported by ReactServerContext');
+
+              hasWarnedAboutUsingConsumer = true;
+            }
+
+            return null;
+          }
+        }
+      });
+    }
+
+    ContextRegistry[globalName] = _context;
+  }
+
+  var context = ContextRegistry[globalName];
+
+  if (context._defaultValue === REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED) {
+    context._defaultValue = defaultValue;
+
+    if (context._currentValue === REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED) {
+      context._currentValue = defaultValue;
+    }
+
+    if (context._currentValue2 === REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED) {
+      context._currentValue2 = defaultValue;
+    }
+  } else if (wasDefined) {
+    throw new Error("ServerContext: " + globalName + " already defined");
   }
 
   return context;
+}
+
+function resolveDispatcher() {
+  var dispatcher = ReactCurrentDispatcher$1.current;
+
+  {
+    if (dispatcher === null) {
+      error('Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for' + ' one of the following reasons:\n' + '1. You might have mismatching versions of React and the renderer (such as React DOM)\n' + '2. You might be breaking the Rules of Hooks\n' + '3. You might have more than one copy of React in the same app\n' + 'See https://reactjs.org/link/invalid-hook-call for tips about how to debug and fix this problem.');
+    }
+  } // Will result in a null access error if accessed outside render phase. We
+  // intentionally don't throw our own error because this is in a hot path.
+  // Also helps ensure this is inlined.
+
+
+  return dispatcher;
+}
+
+function getCacheSignal() {
+  var dispatcher = ReactCurrentCache.current;
+
+  if (!dispatcher) {
+    // If we have no cache to associate with this call, then we don't know
+    // its lifetime. We abort early since that's safer than letting it live
+    // for ever. Unlike just caching which can be a functional noop outside
+    // of React, these should generally always be associated with some React
+    // render but we're not limiting quite as much as making it a Hook.
+    // It's safer than erroring early at runtime.
+    var controller = new AbortController();
+    var reason = new Error('This CacheSignal was requested outside React which means that it is ' + 'immediately aborted.');
+    controller.abort(reason);
+    return controller.signal;
+  }
+
+  return dispatcher.getCacheSignal();
+}
+function getCacheForType(resourceType) {
+  var dispatcher = ReactCurrentCache.current;
+
+  if (!dispatcher) {
+    // If there is no dispatcher, then we treat this as not being cached.
+    return resourceType();
+  }
+
+  return dispatcher.getCacheForType(resourceType);
+}
+function useContext(Context) {
+  var dispatcher = resolveDispatcher();
+
+  {
+    // TODO: add a more generic warning for invalid values.
+    if (Context._context !== undefined) {
+      var realContext = Context._context; // Don't deduplicate because this legitimately causes bugs
+      // and nobody should be using this in existing code.
+
+      if (realContext.Consumer === Context) {
+        error('Calling useContext(Context.Consumer) is not supported, may cause bugs, and will be ' + 'removed in a future major release. Did you mean to call useContext(Context) instead?');
+      } else if (realContext.Provider === Context) {
+        error('Calling useContext(Context.Provider) is not supported. ' + 'Did you mean to call useContext(Context) instead?');
+      }
+    }
+  }
+
+  return dispatcher.useContext(Context);
+}
+function useCallback(callback, deps) {
+  var dispatcher = resolveDispatcher();
+  return dispatcher.useCallback(callback, deps);
+}
+function useMemo(create, deps) {
+  var dispatcher = resolveDispatcher();
+  return dispatcher.useMemo(create, deps);
+}
+function useDebugValue(value, formatterFn) {
+  {
+    var dispatcher = resolveDispatcher();
+    return dispatcher.useDebugValue(value, formatterFn);
+  }
+}
+function useId() {
+  var dispatcher = resolveDispatcher();
+  return dispatcher.useId();
+}
+function use(usable) {
+  var dispatcher = resolveDispatcher();
+  return dispatcher.use(usable);
+}
+
+function forwardRef(render) {
+  {
+    if (render != null && render.$$typeof === REACT_MEMO_TYPE) {
+      error('forwardRef requires a render function but received a `memo` ' + 'component. Instead of forwardRef(memo(...)), use ' + 'memo(forwardRef(...)).');
+    } else if (typeof render !== 'function') {
+      error('forwardRef requires a render function but was given %s.', render === null ? 'null' : typeof render);
+    } else {
+      if (render.length !== 0 && render.length !== 2) {
+        error('forwardRef render functions accept exactly two parameters: props and ref. %s', render.length === 1 ? 'Did you forget to use the ref parameter?' : 'Any additional parameter will be undefined.');
+      }
+    }
+
+    if (render != null) {
+      if (render.defaultProps != null || render.propTypes != null) {
+        error('forwardRef render functions do not support propTypes or defaultProps. ' + 'Did you accidentally pass a React component?');
+      }
+    }
+  }
+
+  var elementType = {
+    $$typeof: REACT_FORWARD_REF_TYPE,
+    render: render
+  };
+
+  {
+    var ownName;
+    Object.defineProperty(elementType, 'displayName', {
+      enumerable: false,
+      configurable: true,
+      get: function () {
+        return ownName;
+      },
+      set: function (name) {
+        ownName = name; // The inner component shouldn't inherit this display name in most cases,
+        // because the component may be used elsewhere.
+        // But it's nice for anonymous functions to inherit the name,
+        // so that our component-stack generation logic will display their frames.
+        // An anonymous function generally suggests a pattern like:
+        //   React.forwardRef((props, ref) => {...});
+        // This kind of inner function is not used elsewhere so the side effect is okay.
+
+        if (!render.name && !render.displayName) {
+          render.displayName = name;
+        }
+      }
+    });
+  }
+
+  return elementType;
 }
 
 var Uninitialized = -1;
@@ -2350,57 +2332,6 @@ function lazy(ctor) {
   return lazyType;
 }
 
-function forwardRef(render) {
-  {
-    if (render != null && render.$$typeof === REACT_MEMO_TYPE) {
-      error('forwardRef requires a render function but received a `memo` ' + 'component. Instead of forwardRef(memo(...)), use ' + 'memo(forwardRef(...)).');
-    } else if (typeof render !== 'function') {
-      error('forwardRef requires a render function but was given %s.', render === null ? 'null' : typeof render);
-    } else {
-      if (render.length !== 0 && render.length !== 2) {
-        error('forwardRef render functions accept exactly two parameters: props and ref. %s', render.length === 1 ? 'Did you forget to use the ref parameter?' : 'Any additional parameter will be undefined.');
-      }
-    }
-
-    if (render != null) {
-      if (render.defaultProps != null || render.propTypes != null) {
-        error('forwardRef render functions do not support propTypes or defaultProps. ' + 'Did you accidentally pass a React component?');
-      }
-    }
-  }
-
-  var elementType = {
-    $$typeof: REACT_FORWARD_REF_TYPE,
-    render: render
-  };
-
-  {
-    var ownName;
-    Object.defineProperty(elementType, 'displayName', {
-      enumerable: false,
-      configurable: true,
-      get: function () {
-        return ownName;
-      },
-      set: function (name) {
-        ownName = name; // The inner component shouldn't inherit this display name in most cases,
-        // because the component may be used elsewhere.
-        // But it's nice for anonymous functions to inherit the name,
-        // so that our component-stack generation logic will display their frames.
-        // An anonymous function generally suggests a pattern like:
-        //   React.forwardRef((props, ref) => {...});
-        // This kind of inner function is not used elsewhere so the side effect is okay.
-
-        if (!render.name && !render.displayName) {
-          render.displayName = name;
-        }
-      }
-    });
-  }
-
-  return elementType;
-}
-
 function memo(type, compare) {
   {
     if (!isValidElementType(type)) {
@@ -2441,130 +2372,118 @@ function memo(type, compare) {
   return elementType;
 }
 
-function cache(fn) {
-  // On the client (i.e. not a Server Components environment) `cache` has
-  // no caching behavior. We just return the function as-is.
-  //
-  // We intend to implement client caching in a future major release. In the
-  // meantime, it's only exposed as an API so that Shared Components can use
-  // per-request caching on the server without breaking on the client. But it
-  // does mean they need to be aware of the behavioral difference.
-  //
-  // The rest of the behavior is the same as the server implementation — it
-  // returns a new reference, extra properties like `displayName` are not
-  // preserved, the length of the new function is 0, etc. That way apps can't
-  // accidentally depend on those details.
-  return function () {
-    // $FlowFixMe[incompatible-call]: We don't want to use rest arguments since we transpile the code.
-    return fn.apply(null, arguments);
+var UNTERMINATED = 0;
+var TERMINATED = 1;
+var ERRORED = 2;
+
+function createCacheRoot() {
+  return new WeakMap();
+}
+
+function createCacheNode() {
+  return {
+    s: UNTERMINATED,
+    // status, represents whether the cached computation returned a value or threw an error
+    v: undefined,
+    // value, either the cached result or an error, depending on s
+    o: null,
+    // object cache, a WeakMap where non-primitive arguments are stored
+    p: null // primitive cache, a regular Map where primitive arguments are stored.
+
   };
 }
 
-function resolveDispatcher() {
-  var dispatcher = ReactCurrentDispatcher$1.current;
+function cache(fn) {
+  return function () {
+    var dispatcher = ReactCurrentCache.current;
 
-  {
-    if (dispatcher === null) {
-      error('Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for' + ' one of the following reasons:\n' + '1. You might have mismatching versions of React and the renderer (such as React DOM)\n' + '2. You might be breaking the Rules of Hooks\n' + '3. You might have more than one copy of React in the same app\n' + 'See https://reactjs.org/link/invalid-hook-call for tips about how to debug and fix this problem.');
+    if (!dispatcher) {
+      // If there is no dispatcher, then we treat this as not being cached.
+      // $FlowFixMe[incompatible-call]: We don't want to use rest arguments since we transpile the code.
+      return fn.apply(null, arguments);
     }
-  } // Will result in a null access error if accessed outside render phase. We
-  // intentionally don't throw our own error because this is in a hot path.
-  // Also helps ensure this is inlined.
 
+    var fnMap = dispatcher.getCacheForType(createCacheRoot);
+    var fnNode = fnMap.get(fn);
+    var cacheNode;
 
-  return dispatcher;
-}
-function useContext(Context) {
-  var dispatcher = resolveDispatcher();
+    if (fnNode === undefined) {
+      cacheNode = createCacheNode();
+      fnMap.set(fn, cacheNode);
+    } else {
+      cacheNode = fnNode;
+    }
 
-  {
-    // TODO: add a more generic warning for invalid values.
-    if (Context._context !== undefined) {
-      var realContext = Context._context; // Don't deduplicate because this legitimately causes bugs
-      // and nobody should be using this in existing code.
+    for (var i = 0, l = arguments.length; i < l; i++) {
+      var arg = arguments[i];
 
-      if (realContext.Consumer === Context) {
-        error('Calling useContext(Context.Consumer) is not supported, may cause bugs, and will be ' + 'removed in a future major release. Did you mean to call useContext(Context) instead?');
-      } else if (realContext.Provider === Context) {
-        error('Calling useContext(Context.Provider) is not supported. ' + 'Did you mean to call useContext(Context) instead?');
+      if (typeof arg === 'function' || typeof arg === 'object' && arg !== null) {
+        // Objects go into a WeakMap
+        var objectCache = cacheNode.o;
+
+        if (objectCache === null) {
+          cacheNode.o = objectCache = new WeakMap();
+        }
+
+        var objectNode = objectCache.get(arg);
+
+        if (objectNode === undefined) {
+          cacheNode = createCacheNode();
+          objectCache.set(arg, cacheNode);
+        } else {
+          cacheNode = objectNode;
+        }
+      } else {
+        // Primitives go into a regular Map
+        var primitiveCache = cacheNode.p;
+
+        if (primitiveCache === null) {
+          cacheNode.p = primitiveCache = new Map();
+        }
+
+        var primitiveNode = primitiveCache.get(arg);
+
+        if (primitiveNode === undefined) {
+          cacheNode = createCacheNode();
+          primitiveCache.set(arg, cacheNode);
+        } else {
+          cacheNode = primitiveNode;
+        }
       }
     }
-  }
 
-  return dispatcher.useContext(Context);
-}
-function useState(initialState) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useState(initialState);
-}
-function useReducer(reducer, initialArg, init) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useReducer(reducer, initialArg, init);
-}
-function useRef(initialValue) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useRef(initialValue);
-}
-function useEffect(create, deps) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useEffect(create, deps);
-}
-function useInsertionEffect(create, deps) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useInsertionEffect(create, deps);
-}
-function useLayoutEffect(create, deps) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useLayoutEffect(create, deps);
-}
-function useCallback(callback, deps) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useCallback(callback, deps);
-}
-function useMemo(create, deps) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useMemo(create, deps);
-}
-function useImperativeHandle(ref, create, deps) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useImperativeHandle(ref, create, deps);
-}
-function useDebugValue(value, formatterFn) {
-  {
-    var dispatcher = resolveDispatcher();
-    return dispatcher.useDebugValue(value, formatterFn);
-  }
-}
-function useTransition() {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useTransition();
-}
-function useDeferredValue(value, initialValue) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useDeferredValue(value, initialValue);
-}
-function useId() {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useId();
-}
-function useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-}
-function useCacheRefresh() {
-  var dispatcher = resolveDispatcher(); // $FlowFixMe[not-a-function] This is unstable, thus optional
+    if (cacheNode.s === TERMINATED) {
+      return cacheNode.v;
+    }
 
-  return dispatcher.useCacheRefresh();
-}
-function use(usable) {
-  var dispatcher = resolveDispatcher();
-  return dispatcher.use(usable);
-}
-function useOptimistic(passthrough, reducer) {
-  var dispatcher = resolveDispatcher(); // $FlowFixMe[not-a-function] This is unstable, thus optional
+    if (cacheNode.s === ERRORED) {
+      throw cacheNode.v;
+    }
 
-  return dispatcher.useOptimistic(passthrough, reducer);
+    try {
+      // $FlowFixMe[incompatible-call]: We don't want to use rest arguments since we transpile the code.
+      var result = fn.apply(null, arguments);
+      var terminatedNode = cacheNode;
+      terminatedNode.s = TERMINATED;
+      terminatedNode.v = result;
+      return result;
+    } catch (error) {
+      // We store the first error that's thrown and rethrow it.
+      var erroredNode = cacheNode;
+      erroredNode.s = ERRORED;
+      erroredNode.v = error;
+      throw error;
+    }
+  };
 }
+
+/**
+ * Keeps track of the current batch's configuration such as how long an update
+ * should suspend for if it needs to.
+ */
+var ReactCurrentBatchConfig = {
+  transition: null
+};
 
 function startTransition(scope, options) {
   var prevTransition = ReactCurrentBatchConfig.transition; // Each renderer registers a callback to receive the return value of
@@ -2626,375 +2545,152 @@ reportError : function (error) {
   console['error'](error);
 };
 
-var didWarnAboutMessageChannel = false;
-var enqueueTaskImpl = null;
-function enqueueTask(task) {
-  if (enqueueTaskImpl === null) {
-    try {
-      // read require off the module object to get around the bundlers.
-      // we don't want them to detect a require and bundle a Node polyfill.
-      var requireString = ('require' + Math.random()).slice(0, 7);
-      var nodeRequire = module && module[requireString]; // assuming we're in node, let's try to get node's
-      // version of setImmediate, bypassing fake timers if any.
-
-      enqueueTaskImpl = nodeRequire.call(module, 'timers').setImmediate;
-    } catch (_err) {
-      // we're in a browser
-      // we can't use regular timers because they may still be faked
-      // so we try MessageChannel+postMessage instead
-      enqueueTaskImpl = function (callback) {
-        {
-          if (didWarnAboutMessageChannel === false) {
-            didWarnAboutMessageChannel = true;
-
-            if (typeof MessageChannel === 'undefined') {
-              error('This browser does not have a MessageChannel implementation, ' + 'so enqueuing tasks via await act(async () => ...) will fail. ' + 'Please file an issue at https://github.com/facebook/react/issues ' + 'if you encounter this warning.');
-            }
-          }
-        }
-
-        var channel = new MessageChannel();
-        channel.port1.onmessage = callback;
-        channel.port2.postMessage(undefined);
-      };
-    }
-  }
-
-  return enqueueTaskImpl(task);
+function postpone(reason) {
+  // eslint-disable-next-line react-internal/prod-error-codes
+  var postponeInstance = new Error(reason);
+  postponeInstance.$$typeof = REACT_POSTPONE_TYPE;
+  throw postponeInstance;
 }
 
-// number of `act` scopes on the stack.
+var ReactVersion = '18.3.0-experimental-1219d57fc-20240201';
 
-var actScopeDepth = 0; // We only warn the first time you neglect to await an async `act` scope.
+var getPrototypeOf = Object.getPrototypeOf;
 
-var didWarnNoAwaitAct = false;
-function act(callback) {
-  {
-    // When ReactCurrentActQueue.current is not null, it signals to React that
-    // we're currently inside an `act` scope. React will push all its tasks to
-    // this queue instead of scheduling them with platform APIs.
-    //
-    // We set this to an empty array when we first enter an `act` scope, and
-    // only unset it once we've left the outermost `act` scope — remember that
-    // `act` calls can be nested.
-    //
-    // If we're already inside an `act` scope, reuse the existing queue.
-    var prevIsBatchingLegacy = ReactCurrentActQueue.isBatchingLegacy;
-    var prevActQueue = ReactCurrentActQueue.current;
-    var prevActScopeDepth = actScopeDepth;
-    actScopeDepth++;
-    var queue = ReactCurrentActQueue.current = prevActQueue !== null ? prevActQueue : []; // Used to reproduce behavior of `batchedUpdates` in legacy mode. Only
-    // set to `true` while the given callback is executed, not for updates
-    // triggered during an async event, because this is how the legacy
-    // implementation of `act` behaved.
+// Turns a TypedArray or ArrayBuffer into a string that can be used for comparison
+// in a Map to see if the bytes are the same.
+function binaryToComparableString(view) {
+  return String.fromCharCode.apply(String, new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+}
 
-    ReactCurrentActQueue.isBatchingLegacy = true;
-    var result; // This tracks whether the `act` call is awaited. In certain cases, not
-    // awaiting it is a mistake, so we will detect that and warn.
+var TaintRegistryObjects = ReactServerSharedInternals.TaintRegistryObjects,
+    TaintRegistryValues = ReactServerSharedInternals.TaintRegistryValues,
+    TaintRegistryByteLengths = ReactServerSharedInternals.TaintRegistryByteLengths,
+    TaintRegistryPendingRequests = ReactServerSharedInternals.TaintRegistryPendingRequests; // This is the shared constructor of all typed arrays.
 
-    var didAwaitActCall = false;
+var TypedArrayConstructor = getPrototypeOf(Uint32Array.prototype).constructor;
+var defaultMessage = 'A tainted value was attempted to be serialized to a Client Component or Action closure. ' + 'This would leak it to the client.';
 
-    try {
-      // Reset this to `false` right before entering the React work loop. The
-      // only place we ever read this fields is just below, right after running
-      // the callback. So we don't need to reset after the callback runs.
-      ReactCurrentActQueue.didScheduleLegacyUpdate = false;
-      result = callback();
-      var didScheduleLegacyUpdate = ReactCurrentActQueue.didScheduleLegacyUpdate; // Replicate behavior of original `act` implementation in legacy mode,
-      // which flushed updates immediately after the scope function exits, even
-      // if it's an async function.
+function cleanup(entryValue) {
+  var entry = TaintRegistryValues.get(entryValue);
 
-      if (!prevIsBatchingLegacy && didScheduleLegacyUpdate) {
-        flushActQueue(queue);
-      } // `isBatchingLegacy` gets reset using the regular stack, not the async
-      // one used to track `act` scopes. Why, you may be wondering? Because
-      // that's how it worked before version 18. Yes, it's confusing! We should
-      // delete legacy mode!!
+  if (entry !== undefined) {
+    TaintRegistryPendingRequests.forEach(function (requestQueue) {
+      requestQueue.push(entryValue);
+      entry.count++;
+    });
 
-
-      ReactCurrentActQueue.isBatchingLegacy = prevIsBatchingLegacy;
-    } catch (error) {
-      // `isBatchingLegacy` gets reset using the regular stack, not the async
-      // one used to track `act` scopes. Why, you may be wondering? Because
-      // that's how it worked before version 18. Yes, it's confusing! We should
-      // delete legacy mode!!
-      ReactCurrentActQueue.isBatchingLegacy = prevIsBatchingLegacy;
-      popActScope(prevActQueue, prevActScopeDepth);
-      throw error;
-    }
-
-    if (result !== null && typeof result === 'object' && // $FlowFixMe[method-unbinding]
-    typeof result.then === 'function') {
-      // A promise/thenable was returned from the callback. Wait for it to
-      // resolve before flushing the queue.
-      //
-      // If `act` were implemented as an async function, this whole block could
-      // be a single `await` call. That's really the only difference between
-      // this branch and the next one.
-      var thenable = result; // Warn if the an `act` call with an async scope is not awaited. In a
-      // future release, consider making this an error.
-
-      queueSeveralMicrotasks(function () {
-        if (!didAwaitActCall && !didWarnNoAwaitAct) {
-          didWarnNoAwaitAct = true;
-
-          error('You called act(async () => ...) without await. ' + 'This could lead to unexpected testing behaviour, ' + 'interleaving multiple act calls and mixing their ' + 'scopes. ' + 'You should - await act(async () => ...);');
-        }
-      });
-      return {
-        then: function (resolve, reject) {
-          didAwaitActCall = true;
-          thenable.then(function (returnValue) {
-            popActScope(prevActQueue, prevActScopeDepth);
-
-            if (prevActScopeDepth === 0) {
-              // We're exiting the outermost `act` scope. Flush the queue.
-              try {
-                flushActQueue(queue);
-                enqueueTask(function () {
-                  return (// Recursively flush tasks scheduled by a microtask.
-                    recursivelyFlushAsyncActWork(returnValue, resolve, reject)
-                  );
-                });
-              } catch (error) {
-                // `thenable` might not be a real promise, and `flushActQueue`
-                // might throw, so we need to wrap `flushActQueue` in a
-                // try/catch.
-                reject(error);
-              }
-            } else {
-              resolve(returnValue);
-            }
-          }, function (error) {
-            popActScope(prevActQueue, prevActScopeDepth);
-            reject(error);
-          });
-        }
-      };
+    if (entry.count === 1) {
+      TaintRegistryValues.delete(entryValue);
     } else {
-      var returnValue = result; // The callback is not an async function. Exit the current
-      // scope immediately.
-
-      popActScope(prevActQueue, prevActScopeDepth);
-
-      if (prevActScopeDepth === 0) {
-        // We're exiting the outermost `act` scope. Flush the queue.
-        flushActQueue(queue); // If the queue is not empty, it implies that we intentionally yielded
-        // to the main thread, because something suspended. We will continue
-        // in an asynchronous task.
-        //
-        // Warn if something suspends but the `act` call is not awaited.
-        // In a future release, consider making this an error.
-
-        if (queue.length !== 0) {
-          queueSeveralMicrotasks(function () {
-            if (!didAwaitActCall && !didWarnNoAwaitAct) {
-              didWarnNoAwaitAct = true;
-
-              error('A component suspended inside an `act` scope, but the ' + '`act` call was not awaited. When testing React ' + 'components that depend on asynchronous data, you must ' + 'await the result:\n\n' + 'await act(() => ...)');
-            }
-          });
-        } // Like many things in this module, this is next part is confusing.
-        //
-        // We do not currently require every `act` call that is passed a
-        // callback to be awaited, through arguably we should. Since this
-        // callback was synchronous, we need to exit the current scope before
-        // returning.
-        //
-        // However, if thenable we're about to return *is* awaited, we'll
-        // immediately restore the current scope. So it shouldn't observable.
-        //
-        // This doesn't affect the case where the scope callback is async,
-        // because we always require those calls to be awaited.
-        //
-        // TODO: In a future version, consider always requiring all `act` calls
-        // to be awaited, regardless of whether the callback is sync or async.
-
-
-        ReactCurrentActQueue.current = null;
-      }
-
-      return {
-        then: function (resolve, reject) {
-          didAwaitActCall = true;
-
-          if (prevActScopeDepth === 0) {
-            // If the `act` call is awaited, restore the queue we were
-            // using before (see long comment above) so we can flush it.
-            ReactCurrentActQueue.current = queue;
-            enqueueTask(function () {
-              return (// Recursively flush tasks scheduled by a microtask.
-                recursivelyFlushAsyncActWork(returnValue, resolve, reject)
-              );
-            });
-          } else {
-            resolve(returnValue);
-          }
-        }
-      };
+      entry.count--;
     }
+  }
+} // If FinalizationRegistry doesn't exist, we assume that objects life forever.
+// E.g. the whole VM is just the lifetime of a request.
+
+
+var finalizationRegistry = typeof FinalizationRegistry === 'function' ? new FinalizationRegistry(cleanup) : null;
+function taintUniqueValue(message, lifetime, value) {
+
+
+  message = '' + (message || defaultMessage);
+
+  if (lifetime === null || typeof lifetime !== 'object' && typeof lifetime !== 'function') {
+    throw new Error('To taint a value, a lifetime must be defined by passing an object that holds ' + 'the value.');
+  }
+
+  var entryValue;
+
+  if (typeof value === 'string' || typeof value === 'bigint') {
+    // Use as is.
+    entryValue = value;
+  } else if ((value instanceof TypedArrayConstructor || value instanceof DataView)) {
+    // For now, we just convert binary data to a string so that we can just use the native
+    // hashing in the Map implementation. It doesn't really matter what form the string
+    // take as long as it's the same when we look it up.
+    // We're not too worried about collisions since this should be a high entropy value.
+    TaintRegistryByteLengths.add(value.byteLength);
+    entryValue = binaryToComparableString(value);
+  } else {
+    var kind = value === null ? 'null' : typeof value;
+
+    if (kind === 'object' || kind === 'function') {
+      throw new Error('taintUniqueValue cannot taint objects or functions. Try taintObjectReference instead.');
+    }
+
+    throw new Error('Cannot taint a ' + kind + ' because the value is too general and not unique enough to block globally.');
+  }
+
+  var existingEntry = TaintRegistryValues.get(entryValue);
+
+  if (existingEntry === undefined) {
+    TaintRegistryValues.set(entryValue, {
+      message: message,
+      count: 1
+    });
+  } else {
+    existingEntry.count++;
+  }
+
+  if (finalizationRegistry !== null) {
+    finalizationRegistry.register(lifetime, entryValue);
   }
 }
+function taintObjectReference(message, object) {
 
-function popActScope(prevActQueue, prevActScopeDepth) {
-  {
-    if (prevActScopeDepth !== actScopeDepth - 1) {
-      error('You seem to have overlapping act() calls, this is not supported. ' + 'Be sure to await previous act() calls before making a new one. ');
-    }
 
-    actScopeDepth = prevActScopeDepth;
+  message = '' + (message || defaultMessage);
+
+  if (typeof object === 'string' || typeof object === 'bigint') {
+    throw new Error('Only objects or functions can be passed to taintObjectReference. Try taintUniqueValue instead.');
   }
+
+  if (object === null || typeof object !== 'object' && typeof object !== 'function') {
+    throw new Error('Only objects or functions can be passed to taintObjectReference.');
+  }
+
+  TaintRegistryObjects.set(object, message);
 }
 
-function recursivelyFlushAsyncActWork(returnValue, resolve, reject) {
-  {
-    // Check if any tasks were scheduled asynchronously.
-    var queue = ReactCurrentActQueue.current;
-
-    if (queue !== null) {
-      if (queue.length !== 0) {
-        // Async tasks were scheduled, mostly likely in a microtask.
-        // Keep flushing until there are no more.
-        try {
-          flushActQueue(queue); // The work we just performed may have schedule additional async
-          // tasks. Wait a macrotask and check again.
-
-          enqueueTask(function () {
-            return recursivelyFlushAsyncActWork(returnValue, resolve, reject);
-          });
-        } catch (error) {
-          // Leave remaining tasks on the queue if something throws.
-          reject(error);
-        }
-      } else {
-        // The queue is empty. We can finish.
-        ReactCurrentActQueue.current = null;
-        resolve(returnValue);
-      }
-    } else {
-      resolve(returnValue);
-    }
-  }
-}
-
-var isFlushing = false;
-
-function flushActQueue(queue) {
-  {
-    if (!isFlushing) {
-      // Prevent re-entrance.
-      isFlushing = true;
-      var i = 0;
-
-      try {
-        for (; i < queue.length; i++) {
-          var callback = queue[i];
-
-          do {
-            ReactCurrentActQueue.didUsePromise = false;
-            var continuation = callback(false);
-
-            if (continuation !== null) {
-              if (ReactCurrentActQueue.didUsePromise) {
-                // The component just suspended. Yield to the main thread in
-                // case the promise is already resolved. If so, it will ping in
-                // a microtask and we can resume without unwinding the stack.
-                queue[i] = callback;
-                queue.splice(0, i);
-                return;
-              }
-
-              callback = continuation;
-            } else {
-              break;
-            }
-          } while (true);
-        } // We flushed the entire queue.
-
-
-        queue.length = 0;
-      } catch (error) {
-        // If something throws, leave the remaining callbacks on the queue.
-        queue.splice(0, i + 1);
-        throw error;
-      } finally {
-        isFlushing = false;
-      }
-    }
-  }
-} // Some of our warnings attempt to detect if the `act` call is awaited by
-// checking in an asynchronous task. Wait a few microtasks before checking. The
-// only reason one isn't sufficient is we want to accommodate the case where an
-// `act` call is returned from an async function without first being awaited,
-// since that's a somewhat common pattern. If you do this too many times in a
-// nested sequence, you might get a warning, but you can always fix by awaiting
-// the call.
-//
-// A macrotask would also work (and is the fallback) but depending on the test
-// environment it may cause the warning to fire too late.
-
-
-var queueSeveralMicrotasks = typeof queueMicrotask === 'function' ? function (callback) {
-  queueMicrotask(function () {
-    return queueMicrotask(callback);
-  });
-} : enqueueTask;
-
+// Patch fetch
 var Children = {
   map: mapChildren,
   forEach: forEachChildren,
   count: countChildren,
   toArray: toArray,
   only: onlyChild
-};
+}; // These are server-only
 
 exports.Children = Children;
-exports.Component = Component;
 exports.Fragment = REACT_FRAGMENT_TYPE;
 exports.Profiler = REACT_PROFILER_TYPE;
-exports.PureComponent = PureComponent;
 exports.StrictMode = REACT_STRICT_MODE_TYPE;
 exports.Suspense = REACT_SUSPENSE_TYPE;
 exports.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = ReactSharedInternals;
+exports.__SECRET_SERVER_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = ReactServerSharedInternals;
 exports.cache = cache;
 exports.cloneElement = cloneElement;
-exports.createContext = createContext;
 exports.createElement = createElement;
-exports.createFactory = createFactory;
 exports.createRef = createRef;
+exports.createServerContext = createServerContext;
+exports.experimental_taintObjectReference = taintObjectReference;
+exports.experimental_taintUniqueValue = taintUniqueValue;
 exports.forwardRef = forwardRef;
 exports.isValidElement = isValidElement;
 exports.lazy = lazy;
 exports.memo = memo;
 exports.startTransition = startTransition;
-exports.unstable_act = act;
-exports.unstable_useCacheRefresh = useCacheRefresh;
+exports.unstable_DebugTracingMode = REACT_DEBUG_TRACING_MODE_TYPE;
+exports.unstable_SuspenseList = REACT_SUSPENSE_TYPE;
+exports.unstable_getCacheForType = getCacheForType;
+exports.unstable_getCacheSignal = getCacheSignal;
+exports.unstable_postpone = postpone;
 exports.use = use;
 exports.useCallback = useCallback;
 exports.useContext = useContext;
 exports.useDebugValue = useDebugValue;
-exports.useDeferredValue = useDeferredValue;
-exports.useEffect = useEffect;
 exports.useId = useId;
-exports.useImperativeHandle = useImperativeHandle;
-exports.useInsertionEffect = useInsertionEffect;
-exports.useLayoutEffect = useLayoutEffect;
 exports.useMemo = useMemo;
-exports.useOptimistic = useOptimistic;
-exports.useReducer = useReducer;
-exports.useRef = useRef;
-exports.useState = useState;
-exports.useSyncExternalStore = useSyncExternalStore;
-exports.useTransition = useTransition;
 exports.version = ReactVersion;
-          /* global __REACT_DEVTOOLS_GLOBAL_HOOK__ */
-if (
-  typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== 'undefined' &&
-  typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop ===
-    'function'
-) {
-  __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop(new Error());
-}
-        
   })();
 }

@@ -1586,11 +1586,7 @@ function createRequest(model, bundlerConfig, onError, context, identifierPrefix,
     identifierCount: 1,
     taintCleanupQueue: cleanupQueue,
     onError: onError === undefined ? defaultErrorHandler : onError,
-    onPostpone: onPostpone === undefined ? defaultPostponeHandler : onPostpone,
-    // $FlowFixMe[missing-this-annot]
-    toJSON: function (key, value) {
-      return resolveModelToJSON(request, this, key, value);
-    }
+    onPostpone: onPostpone === undefined ? defaultPostponeHandler : onPostpone
   };
   request.pendingChunks++;
   var rootContext = createRootContext();
@@ -1755,7 +1751,7 @@ function createLazyWrapperAroundWakeable(wakeable) {
   return lazyType;
 }
 
-function attemptResolveElement(request, type, key, ref, props, prevThenableState) {
+function renderElement(request, task, type, key, ref, props) {
   if (ref !== null && ref !== undefined) {
     // When the ref moves to the regular props object this will implicitly
     // throw for functions. We could probably relax it to a DEV warning for other
@@ -1776,8 +1772,13 @@ function attemptResolveElement(request, type, key, ref, props, prevThenableState
       // This is a reference to a Client Component.
       return [REACT_ELEMENT_TYPE, type, key, props];
     } // This is a server-side component.
+    // Reset the task's thenable state before continuing, so that if a later
+    // component suspends we can reuse the same task object. If the same
+    // component suspends again, the thenable state will be restored.
 
 
+    var prevThenableState = task.thenableState;
+    task.thenableState = null;
     prepareToUseHooksForComponent(prevThenableState);
     var result = type(props);
 
@@ -1792,10 +1793,10 @@ function attemptResolveElement(request, type, key, ref, props, prevThenableState
       // the thenable here.
 
 
-      return createLazyWrapperAroundWakeable(result);
+      result = createLazyWrapperAroundWakeable(result);
     }
 
-    return result;
+    return renderModelDestructive(request, task, emptyRoot, '', result);
   } else if (typeof type === 'string') {
     // This is a host element. E.g. HTML.
     return [REACT_ELEMENT_TYPE, type, key, props];
@@ -1805,7 +1806,7 @@ function attemptResolveElement(request, type, key, ref, props, prevThenableState
       // it as a wrapper.
       // TODO: If a key is specified, we should propagate its key to any children.
       // Same as if a Server Component has a key.
-      return props.children;
+      return renderModelDestructive(request, task, emptyRoot, '', props.children);
     } // This might be a built-in React component. We'll let the client decide.
     // Any built-in works as long as its props are serializable.
 
@@ -1823,19 +1824,27 @@ function attemptResolveElement(request, type, key, ref, props, prevThenableState
           var payload = type._payload;
           var init = type._init;
           var wrappedType = init(payload);
-          return attemptResolveElement(request, wrappedType, key, ref, props, prevThenableState);
+          return renderElement(request, task, wrappedType, key, ref, props);
         }
 
       case REACT_FORWARD_REF_TYPE:
         {
-          var render = type.render;
-          prepareToUseHooksForComponent(prevThenableState);
-          return render(props, undefined);
+          var render = type.render; // Reset the task's thenable state before continuing, so that if a later
+          // component suspends we can reuse the same task object. If the same
+          // component suspends again, the thenable state will be restored.
+
+          var _prevThenableState = task.thenableState;
+          task.thenableState = null;
+          prepareToUseHooksForComponent(_prevThenableState);
+
+          var _result = render(props, undefined);
+
+          return renderModelDestructive(request, task, emptyRoot, '', _result);
         }
 
       case REACT_MEMO_TYPE:
         {
-          return attemptResolveElement(request, type.type, key, ref, props, prevThenableState);
+          return renderElement(request, task, type.type, key, ref, props);
         }
     }
   }
@@ -1857,6 +1866,12 @@ function pingTask(request, task) {
 
 function createTask(request, model, context, abortSet) {
   var id = request.nextChunkId++;
+
+  if (typeof model === 'object' && model !== null) {
+    // Register this model as having the ID we're about to write.
+    request.writtenObjects.set(model, id);
+  }
+
   var task = {
     id: id,
     status: PENDING$1,
@@ -1864,6 +1879,30 @@ function createTask(request, model, context, abortSet) {
     context: context,
     ping: function () {
       return pingTask(request, task);
+    },
+    toJSON: function (parentPropertyName, value) {
+      var parent = this; // Make sure that `parent[parentPropertyName]` wasn't JSONified before `value` was passed to us
+
+      {
+        // $FlowFixMe[incompatible-use]
+        var originalValue = parent[parentPropertyName];
+
+        if (typeof originalValue === 'object' && originalValue !== value && !(originalValue instanceof Date)) {
+          if (objectName(originalValue) !== 'Object') {
+            var jsxParentType = jsxChildrenParents.get(parent);
+
+            if (typeof jsxParentType === 'string') {
+              error('%s objects cannot be rendered as text children. Try formatting it using toString().%s', objectName(originalValue), describeObjectForErrorMessage(parent, parentPropertyName));
+            } else {
+              error('Only plain objects can be passed to Client Components from Server Components. ' + '%s objects are not supported.%s', objectName(originalValue), describeObjectForErrorMessage(parent, parentPropertyName));
+            }
+          } else {
+            error('Only plain objects can be passed to Client Components from Server Components. ' + 'Objects with toJSON methods are not supported. Convert it manually ' + 'to a simple value before passing it to props.%s', describeObjectForErrorMessage(parent, parentPropertyName));
+          }
+        }
+      }
+
+      return renderModel(request, task, parent, parentPropertyName, value);
     },
     thenableState: null
   };
@@ -1933,13 +1972,13 @@ function encodeReferenceChunk(request, id, reference) {
   return stringToChunk(row);
 }
 
-function serializeClientReference(request, parent, key, clientReference) {
+function serializeClientReference(request, parent, parentPropertyName, clientReference) {
   var clientReferenceKey = getClientReferenceKey(clientReference);
   var writtenClientReferences = request.writtenClientReferences;
   var existingId = writtenClientReferences.get(clientReferenceKey);
 
   if (existingId !== undefined) {
-    if (parent[0] === REACT_ELEMENT_TYPE && key === '1') {
+    if (parent[0] === REACT_ELEMENT_TYPE && parentPropertyName === '1') {
       // If we're encoding the "type" of an element, we can refer
       // to that by a lazy reference instead of directly since React
       // knows how to deal with lazy values. This lets us suspend
@@ -1958,7 +1997,7 @@ function serializeClientReference(request, parent, key, clientReference) {
     emitImportChunk(request, importId, clientReferenceMetadata);
     writtenClientReferences.set(clientReferenceKey, importId);
 
-    if (parent[0] === REACT_ELEMENT_TYPE && key === '1') {
+    if (parent[0] === REACT_ELEMENT_TYPE && parentPropertyName === '1') {
       // If we're encoding the "type" of an element, we can refer
       // to that by a lazy reference instead of directly since React
       // knows how to deal with lazy values. This lets us suspend
@@ -1984,7 +2023,7 @@ function outlineModel(request, value) {
   return newTask.id;
 }
 
-function serializeServerReference(request, parent, key, serverReference) {
+function serializeServerReference(request, serverReference) {
   var writtenServerReferences = request.writtenServerReferences;
   var existingId = writtenServerReferences.get(serverReference);
 
@@ -2066,108 +2105,63 @@ function escapeStringValue(value) {
 }
 var modelRoot = false;
 
-function resolveModelToJSON(request, parent, key, value) {
-  // Make sure that `parent[key]` wasn't JSONified before `value` was passed to us
-  {
-    // $FlowFixMe[incompatible-use]
-    var originalValue = parent[key];
+function renderModel(request, task, parent, key, value) {
+  try {
+    return renderModelDestructive(request, task, parent, key, value);
+  } catch (thrownValue) {
+    var x = thrownValue === SuspenseException ? // This is a special type of exception used for Suspense. For historical
+    // reasons, the rest of the Suspense implementation expects the thrown
+    // value to be a thenable, because before `use` existed that was the
+    // (unstable) API for suspending. This implementation detail can change
+    // later, once we deprecate the old API in favor of `use`.
+    getSuspendedThenable() : thrownValue; // If the suspended/errored value was an element or lazy it can be reduced
+    // to a lazy reference, so that it doesn't error the parent.
 
-    if (typeof originalValue === 'object' && originalValue !== value && !(originalValue instanceof Date)) {
-      if (objectName(originalValue) !== 'Object') {
-        var jsxParentType = jsxChildrenParents.get(parent);
+    var model = task.model;
+    var wasReactNode = typeof model === 'object' && model !== null && (model.$$typeof === REACT_ELEMENT_TYPE || model.$$typeof === REACT_LAZY_TYPE);
 
-        if (typeof jsxParentType === 'string') {
-          error('%s objects cannot be rendered as text children. Try formatting it using toString().%s', objectName(originalValue), describeObjectForErrorMessage(parent, key));
-        } else {
-          error('Only plain objects can be passed to Client Components from Server Components. ' + '%s objects are not supported.%s', objectName(originalValue), describeObjectForErrorMessage(parent, key));
-        }
-      } else {
-        error('Only plain objects can be passed to Client Components from Server Components. ' + 'Objects with toJSON methods are not supported. Convert it manually ' + 'to a simple value before passing it to props.%s', describeObjectForErrorMessage(parent, key));
-      }
-    }
-  } // Special Symbols
+    if (typeof x === 'object' && x !== null) {
+      // $FlowFixMe[method-unbinding]
+      if (typeof x.then === 'function') {
+        // Something suspended, we'll need to create a new task and resolve it later.
+        request.pendingChunks++;
+        var newTask = createTask(request, task.model, getActiveContext(), request.abortableTasks);
+        var ping = newTask.ping;
+        x.then(ping, ping);
+        newTask.thenableState = getThenableStateAfterSuspending();
 
-
-  switch (value) {
-    case REACT_ELEMENT_TYPE:
-      return '$';
-  }
-
-
-  while (typeof value === 'object' && value !== null && (value.$$typeof === REACT_ELEMENT_TYPE || value.$$typeof === REACT_LAZY_TYPE)) {
-
-    try {
-      switch (value.$$typeof) {
-        case REACT_ELEMENT_TYPE:
-          {
-            var writtenObjects = request.writtenObjects;
-            var existingId = writtenObjects.get(value);
-
-            if (existingId !== undefined) {
-              if (existingId === -1) {
-                // Seen but not yet outlined.
-                var newId = outlineModel(request, value);
-                return serializeByValueID(newId);
-              } else if (modelRoot === value) {
-                // This is the ID we're currently emitting so we need to write it
-                // once but if we discover it again, we refer to it by id.
-                modelRoot = null;
-              } else {
-                // We've already emitted this as an outlined object, so we can
-                // just refer to that by its existing ID.
-                return serializeByValueID(existingId);
-              }
-            } else {
-              // This is the first time we've seen this object. We may never see it again
-              // so we'll inline it. Mark it as seen. If we see it again, we'll outline.
-              writtenObjects.set(value, -1);
-            } // TODO: Concatenate keys of parents onto children.
-
-
-            var element = value; // Attempt to render the Server Component.
-
-            value = attemptResolveElement(request, element.type, element.key, element.ref, element.props, null);
-            break;
-          }
-
-        case REACT_LAZY_TYPE:
-          {
-            var payload = value._payload;
-            var init = value._init;
-            value = init(payload);
-            break;
-          }
-      }
-    } catch (thrownValue) {
-      var x = thrownValue === SuspenseException ? // This is a special type of exception used for Suspense. For historical
-      // reasons, the rest of the Suspense implementation expects the thrown
-      // value to be a thenable, because before `use` existed that was the
-      // (unstable) API for suspending. This implementation detail can change
-      // later, once we deprecate the old API in favor of `use`.
-      getSuspendedThenable() : thrownValue;
-
-      if (typeof x === 'object' && x !== null) {
-        // $FlowFixMe[method-unbinding]
-        if (typeof x.then === 'function') {
-          // Something suspended, we'll need to create a new task and resolve it later.
-          request.pendingChunks++;
-          var newTask = createTask(request, value, getActiveContext(), request.abortableTasks);
-          var ping = newTask.ping;
-          x.then(ping, ping);
-          newTask.thenableState = getThenableStateAfterSuspending();
+        if (wasReactNode) {
           return serializeLazyID(newTask.id);
         }
-      } // Something errored. We'll still send everything we have up until this point.
+
+        return serializeByValueID(newTask.id);
+      }
+    }
+
+    if (wasReactNode) {
+      // Something errored. We'll still send everything we have up until this point.
       // We'll replace this element with a lazy reference that throws on the client
       // once it gets rendered.
-
-
       request.pendingChunks++;
       var errorId = request.nextChunkId++;
       var digest = logRecoverableError(request, x);
       emitErrorChunk(request, errorId, digest, x);
       return serializeLazyID(errorId);
-    }
+    } // Something errored but it was not in a React Node. There's no need to serialize
+    // it by value because it'll just error the whole parent row anyway so we can
+    // just stop any siblings and error the whole parent row.
+
+
+    throw x;
+  }
+}
+
+function renderModelDestructive(request, task, parent, parentPropertyName, value) {
+  // Set the currently rendering model
+  task.model = value; // Special Symbol, that's very common.
+
+  if (value === REACT_ELEMENT_TYPE) {
+    return '$';
   }
 
   if (value === null) {
@@ -2175,39 +2169,77 @@ function resolveModelToJSON(request, parent, key, value) {
   }
 
   if (typeof value === 'object') {
+    switch (value.$$typeof) {
+      case REACT_ELEMENT_TYPE:
+        {
 
-    if (isClientReference(value)) {
-      return serializeClientReference(request, parent, key, value);
+          var _writtenObjects = request.writtenObjects;
+
+          var _existingId = _writtenObjects.get(value);
+
+          if (_existingId !== undefined) {
+            if (_existingId === -1) {
+              // Seen but not yet outlined.
+              var newId = outlineModel(request, value);
+              return serializeByValueID(newId);
+            } else if (modelRoot === value) {
+              // This is the ID we're currently emitting so we need to write it
+              // once but if we discover it again, we refer to it by id.
+              modelRoot = null;
+            } else {
+              // We've already emitted this as an outlined object, so we can
+              // just refer to that by its existing ID.
+              return serializeByValueID(_existingId);
+            }
+          } else {
+            // This is the first time we've seen this object. We may never see it again
+            // so we'll inline it. Mark it as seen. If we see it again, we'll outline.
+            _writtenObjects.set(value, -1);
+          } // TODO: Concatenate keys of parents onto children.
+
+
+          var element = value; // Attempt to render the Server Component.
+
+          return renderElement(request, task, element.type, element.key, element.ref, element.props);
+        }
+
+      case REACT_LAZY_TYPE:
+        {
+          var payload = value._payload;
+          var init = value._init;
+          var resolvedModel = init(payload);
+          return renderModelDestructive(request, task, emptyRoot, '', resolvedModel);
+        }
     }
 
-    var _writtenObjects = request.writtenObjects;
+    if (isClientReference(value)) {
+      return serializeClientReference(request, parent, parentPropertyName, value);
+    }
 
-    var _existingId = _writtenObjects.get(value); // $FlowFixMe[method-unbinding]
-
+    var writtenObjects = request.writtenObjects;
+    var existingId = writtenObjects.get(value); // $FlowFixMe[method-unbinding]
 
     if (typeof value.then === 'function') {
-      if (_existingId !== undefined) {
+      if (existingId !== undefined) {
         if (modelRoot === value) {
           // This is the ID we're currently emitting so we need to write it
           // once but if we discover it again, we refer to it by id.
           modelRoot = null;
         } else {
           // We've seen this promise before, so we can just refer to the same result.
-          return serializePromiseID(_existingId);
+          return serializePromiseID(existingId);
         }
       } // We assume that any object with a .then property is a "Thenable" type,
       // or a Promise type. Either of which can be represented by a Promise.
 
 
       var promiseId = serializeThenable(request, value);
-
-      _writtenObjects.set(value, promiseId);
-
+      writtenObjects.set(value, promiseId);
       return serializePromiseID(promiseId);
     }
 
-    if (_existingId !== undefined) {
-      if (_existingId === -1) {
+    if (existingId !== undefined) {
+      if (existingId === -1) {
         // Seen but not yet outlined.
         var _newId = outlineModel(request, value);
 
@@ -2219,12 +2251,12 @@ function resolveModelToJSON(request, parent, key, value) {
       } else {
         // We've already emitted this as an outlined object, so we can
         // just refer to that by its existing ID.
-        return serializeByValueID(_existingId);
+        return serializeByValueID(existingId);
       }
     } else {
       // This is the first time we've seen this object. We may never see it again
       // so we'll inline it. Mark it as seen. If we see it again, we'll outline.
-      _writtenObjects.set(value, -1);
+      writtenObjects.set(value, -1);
     }
 
     if (isArray(value)) {
@@ -2255,14 +2287,14 @@ function resolveModelToJSON(request, parent, key, value) {
 
     {
       if (objectName(value) !== 'Object') {
-        error('Only plain objects can be passed to Client Components from Server Components. ' + '%s objects are not supported.%s', objectName(value), describeObjectForErrorMessage(parent, key));
+        error('Only plain objects can be passed to Client Components from Server Components. ' + '%s objects are not supported.%s', objectName(value), describeObjectForErrorMessage(parent, parentPropertyName));
       } else if (!isSimpleObject(value)) {
-        error('Only plain objects can be passed to Client Components from Server Components. ' + 'Classes or other objects with methods are not supported.%s', describeObjectForErrorMessage(parent, key));
+        error('Only plain objects can be passed to Client Components from Server Components. ' + 'Classes or other objects with methods are not supported.%s', describeObjectForErrorMessage(parent, parentPropertyName));
       } else if (Object.getOwnPropertySymbols) {
         var symbols = Object.getOwnPropertySymbols(value);
 
         if (symbols.length > 0) {
-          error('Only plain objects can be passed to Client Components from Server Components. ' + 'Objects with symbol properties like %s are not supported.%s', symbols[0].description, describeObjectForErrorMessage(parent, key));
+          error('Only plain objects can be passed to Client Components from Server Components. ' + 'Objects with symbol properties like %s are not supported.%s', symbols[0].description, describeObjectForErrorMessage(parent, parentPropertyName));
         }
       }
     } // $FlowFixMe[incompatible-return]
@@ -2277,9 +2309,9 @@ function resolveModelToJSON(request, parent, key, value) {
     if (value[value.length - 1] === 'Z') {
       // Possibly a Date, whose toJSON automatically calls toISOString
       // $FlowFixMe[incompatible-use]
-      var _originalValue = parent[key];
+      var originalValue = parent[parentPropertyName];
 
-      if (_originalValue instanceof Date) {
+      if (originalValue instanceof Date) {
         return serializeDateFromDateJSON(value);
       }
     }
@@ -2307,19 +2339,18 @@ function resolveModelToJSON(request, parent, key, value) {
   }
 
   if (typeof value === 'function') {
-
     if (isClientReference(value)) {
-      return serializeClientReference(request, parent, key, value);
+      return serializeClientReference(request, parent, parentPropertyName, value);
     }
 
     if (isServerReference(value)) {
-      return serializeServerReference(request, parent, key, value);
+      return serializeServerReference(request, value);
     }
 
-    if (/^on[A-Z]/.test(key)) {
-      throw new Error('Event handlers cannot be passed to Client Component props.' + describeObjectForErrorMessage(parent, key) + '\nIf you need interactivity, consider converting part of this to a Client Component.');
+    if (/^on[A-Z]/.test(parentPropertyName)) {
+      throw new Error('Event handlers cannot be passed to Client Component props.' + describeObjectForErrorMessage(parent, parentPropertyName) + '\nIf you need interactivity, consider converting part of this to a Client Component.');
     } else {
-      throw new Error('Functions cannot be passed directly to Client Components ' + 'unless you explicitly expose it by marking it with "use server".' + describeObjectForErrorMessage(parent, key));
+      throw new Error('Functions cannot be passed directly to Client Components ' + 'unless you explicitly expose it by marking it with "use server".' + describeObjectForErrorMessage(parent, parentPropertyName));
     }
   }
 
@@ -2337,7 +2368,7 @@ function resolveModelToJSON(request, parent, key, value) {
 
     if (Symbol.for(name) !== value) {
       throw new Error('Only global symbols received from Symbol.for(...) can be passed to Client Components. ' + ("The symbol Symbol.for(" + // $FlowFixMe[incompatible-type] `description` might be undefined
-      value.description + ") cannot be found among global symbols.") + describeObjectForErrorMessage(parent, key));
+      value.description + ") cannot be found among global symbols.") + describeObjectForErrorMessage(parent, parentPropertyName));
     }
 
     request.pendingChunks++;
@@ -2352,7 +2383,7 @@ function resolveModelToJSON(request, parent, key, value) {
     return serializeBigInt(value);
   }
 
-  throw new Error("Type " + typeof value + " is not supported in Client Component props." + describeObjectForErrorMessage(parent, key));
+  throw new Error("Type " + typeof value + " is not supported in Client Component props." + describeObjectForErrorMessage(parent, parentPropertyName));
 }
 
 function logPostpone(request, reason) {
@@ -2462,17 +2493,13 @@ function emitSymbolChunk(request, id, name) {
   request.completedImportChunks.push(processedChunk);
 }
 
-function emitModelChunk(request, id, model) {
-  // Track the root so we know that we have to emit this object even though it
-  // already has an ID. This is needed because we might see this object twice
-  // in the same toJSON if it is cyclic.
-  modelRoot = model; // $FlowFixMe[incompatible-type] stringify can return null
-
-  var json = stringify(model, request.toJSON);
+function emitModelChunk(request, id, json) {
   var row = id.toString(16) + ':' + json + '\n';
   var processedChunk = stringToChunk(row);
   request.completedRegularChunks.push(processedChunk);
 }
+
+var emptyRoot = {};
 
 function retryTask(request, task) {
   if (task.status !== PENDING$1) {
@@ -2483,41 +2510,22 @@ function retryTask(request, task) {
   switchContext(task.context);
 
   try {
-    var value = task.model;
+    // Track the root so we know that we have to emit this object even though it
+    // already has an ID. This is needed because we might see this object twice
+    // in the same toJSON if it is cyclic.
+    modelRoot = task.model; // We call the destructive form that mutates this task. That way if something
+    // suspends again, we can reuse the same task instead of spawning a new one.
 
-    if (typeof value === 'object' && value !== null && value.$$typeof === REACT_ELEMENT_TYPE) {
-      request.writtenObjects.set(value, task.id); // TODO: Concatenate keys of parents onto children.
+    var resolvedModel = renderModelDestructive(request, task, emptyRoot, '', task.model); // Track the root again for the resolved object.
 
-      var element = value; // When retrying a component, reuse the thenableState from the
-      // previous attempt.
+    modelRoot = resolvedModel; // If the value is a string, it means it's a terminal value adn we already escaped it
+    // We don't need to escape it again so it's not passed the toJSON replacer.
+    // Object might contain unresolved values like additional elements.
+    // This is simulating what the JSON loop would do if this was part of it.
+    // $FlowFixMe[incompatible-type] stringify can return null
 
-      var prevThenableState = task.thenableState; // Attempt to render the Server Component.
-      // Doing this here lets us reuse this same task if the next component
-      // also suspends.
-
-      task.model = value;
-      value = attemptResolveElement(request, element.type, element.key, element.ref, element.props, prevThenableState); // Successfully finished this component. We're going to keep rendering
-      // using the same task, but we reset its thenable state before continuing.
-
-      task.thenableState = null; // Keep rendering and reuse the same task. This inner loop is separate
-      // from the render above because we don't need to reset the thenable state
-      // until the next time something suspends and retries.
-
-      while (typeof value === 'object' && value !== null && value.$$typeof === REACT_ELEMENT_TYPE) {
-        request.writtenObjects.set(value, task.id); // TODO: Concatenate keys of parents onto children.
-
-        var nextElement = value;
-        task.model = value;
-        value = attemptResolveElement(request, nextElement.type, nextElement.key, nextElement.ref, nextElement.props, null);
-      }
-    } // Track that this object is outlined and has an id.
-
-
-    if (typeof value === 'object' && value !== null) {
-      request.writtenObjects.set(value, task.id);
-    }
-
-    emitModelChunk(request, task.id, value);
+    var json = typeof resolvedModel === 'string' ? stringify(resolvedModel) : stringify(resolvedModel, task.toJSON);
+    emitModelChunk(request, task.id, json);
     request.abortableTasks.delete(task);
     task.status = COMPLETED;
   } catch (thrownValue) {
