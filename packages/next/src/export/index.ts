@@ -417,9 +417,10 @@ export async function exportAppImpl(
 
   const filteredPaths = exportPaths.filter(
     (route) =>
-      exportPathMap[route]._isAppDir ||
-      // Remove API routes
-      !isAPIRoute(exportPathMap[route].page)
+      route === '/static' &&
+      (exportPathMap[route]._isAppDir ||
+        // Remove API routes
+        !isAPIRoute(exportPathMap[route].page))
   )
 
   if (filteredPaths.length !== exportPaths.length) {

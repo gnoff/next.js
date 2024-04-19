@@ -2521,7 +2521,8 @@ export default async function build(
 
       const hasPages500 = usedStaticStatusPages.includes('/500')
       const useDefaultStatic500 =
-        !hasPages500 && !hasNonStaticErrorPage && !customAppGetInitialProps
+        true ||
+        (!hasPages500 && !hasNonStaticErrorPage && !customAppGetInitialProps)
 
       const combinedPages = [...staticPages, ...ssgPages]
       const isApp404Static = appStaticPaths.has(

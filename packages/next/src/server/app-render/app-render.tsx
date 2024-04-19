@@ -108,6 +108,7 @@ import {
   usedDynamicAPIs,
   createPostponedAbortSignal,
   formatDynamicAPIAccesses,
+  getPostponeForAbort,
 } from './dynamic-rendering'
 import {
   getClientComponentLoaderMetrics,
@@ -950,17 +951,47 @@ async function renderToHTMLOrFlightImpl(
         nonce
       )
 
+      let flightAbort
+      if (isStaticGeneration) {
+        flightAbort = new AbortController()
+      }
+
       // We kick off the Flight Request (render) here. It is ok to initiate the render in an arbitrary
       // place however it is critical that we only construct the Flight Response inside the SSR
       // render so that directives like preloads are correctly piped through
-      const serverStream = ComponentMod.renderToReadableStream(
+      let serverStream = ComponentMod.renderToReadableStream(
         <ReactServerApp tree={tree} ctx={ctx} asNotFound={asNotFound} />,
         clientReferenceManifest.clientModules,
         {
           onError: serverComponentsErrorHandler,
           nonce,
+          signal: flightAbort ? flightAbort.signal : undefined,
         }
       )
+
+      if (isStaticGeneration) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0)
+        }).catch(() => {})
+        console.log('ABORTING FLIGHT')
+
+        // We've scheduled a task to run after the first work task from React Flight
+        // We can abort here with a postpone object
+
+        flightAbort?.abort(getPostponeForAbort('forget-io'))
+
+        let [s1, s2] = serverStream.tee()
+        serverStream = s1
+        const reader = s2.getReader()
+        const td = new TextDecoder()
+        while (true) {
+          const { done, value: chunk } = await reader.read()
+          if (done) {
+            break
+          }
+          console.log(td.decode(chunk))
+        }
+      }
 
       // We are going to consume this render both for SSR and for inlining the flight data
       let [renderStream, dataStream] = serverStream.tee()
@@ -1049,125 +1080,149 @@ async function renderToHTMLOrFlightImpl(
            *                      all server inserted HTML and flight data
            */
 
-          // First we check if we have any dynamic holes in our HTML prerender
-          if (usedDynamicAPIs(prerenderState)) {
-            if (postponed != null) {
-              // This is the Dynamic HTML case.
-              metadata.postponed = JSON.stringify(
-                getDynamicHTMLPostponedState(postponed)
-              )
-            } else {
-              // This is the Dynamic Data case
-              metadata.postponed = JSON.stringify(
-                getDynamicDataPostponedState()
-              )
-            }
-            // Regardless of whether this is the Dynamic HTML or Dynamic Data case we need to ensure we include
-            // server inserted html in the static response because the html that is part of the prerender may depend on it
-            // It is possible in the set of stream transforms for Dynamic HTML vs Dynamic Data may differ but currently both states
-            // require the same set so we unify the code path here
+          if (postponed != null) {
+            // we had dynamic holes
+            metadata.postponed = JSON.stringify(
+              getDynamicHTMLPostponedState(postponed)
+            )
             return {
               stream: await continueDynamicPrerender(stream, {
                 getServerInsertedHTML,
               }),
             }
           } else {
-            // We may still be rendering the RSC stream even though the HTML is finished.
-            // We wait for the RSC stream to complete and check again if dynamic was used
-            const [original, flightSpy] = dataStream.tee()
-            dataStream = original
-
-            await flightRenderComplete(flightSpy)
-
-            if (usedDynamicAPIs(prerenderState)) {
-              // This is the same logic above just repeated after ensuring the RSC stream itself has completed
-              if (postponed != null) {
-                // This is the Dynamic HTML case.
-                metadata.postponed = JSON.stringify(
-                  getDynamicHTMLPostponedState(postponed)
-                )
-              } else {
-                // This is the Dynamic Data case
-                metadata.postponed = JSON.stringify(
-                  getDynamicDataPostponedState()
-                )
-              }
-              // Regardless of whether this is the Dynamic HTML or Dynamic Data case we need to ensure we include
-              // server inserted html in the static response because the html that is part of the prerender may depend on it
-              // It is possible in the set of stream transforms for Dynamic HTML vs Dynamic Data may differ but currently both states
-              // require the same set so we unify the code path here
-              return {
-                stream: await continueDynamicPrerender(stream, {
-                  getServerInsertedHTML,
-                }),
-              }
-            } else {
-              // This is the Static case
-              // We still have not used any dynamic APIs. At this point we can produce an entirely static prerender response
-              let renderedHTMLStream = stream
-
-              if (staticGenerationStore.forceDynamic) {
-                throw new StaticGenBailoutError(
-                  'Invariant: a Page with `dynamic = "force-dynamic"` did not trigger the dynamic pathway. This is a bug in Next.js'
-                )
-              }
-
-              if (postponed != null) {
-                // We postponed but nothing dynamic was used. We resume the render now and immediately abort it
-                // so we can set all the postponed boundaries to client render mode before we store the HTML response
-                const resumeRenderer = createStaticRenderer({
-                  isRoutePPREnabled,
-                  isStaticGeneration: false,
-                  postponed: getDynamicHTMLPostponedState(postponed),
-                  streamOptions: {
-                    signal: createPostponedAbortSignal(
-                      'static prerender resume'
-                    ),
-                    onError: htmlRendererErrorHandler,
-                    nonce,
-                  },
-                })
-
-                // We don't actually want to render anything so we just pass a stream
-                // that never resolves. The resume call is going to abort immediately anyway
-                const foreverStream = new ReadableStream<Uint8Array>()
-
-                const resumeChildren = (
-                  <HeadManagerContext.Provider
-                    value={{
-                      appDir: true,
-                      nonce,
-                    }}
-                  >
-                    <ServerInsertedHTMLProvider>
-                      <ReactServerEntrypoint
-                        reactServerStream={foreverStream}
-                        preinitScripts={() => {}}
-                        clientReferenceManifest={clientReferenceManifest}
-                        nonce={nonce}
-                      />
-                    </ServerInsertedHTMLProvider>
-                  </HeadManagerContext.Provider>
-                )
-
-                const { stream: resumeStream } =
-                  await resumeRenderer.render(resumeChildren)
-                // First we write everything from the prerender, then we write everything from the aborted resume render
-                renderedHTMLStream = chainStreams(stream, resumeStream)
-              }
-
-              return {
-                stream: await continueStaticPrerender(renderedHTMLStream, {
-                  inlinedDataStream: createInlinedDataReadableStream(
-                    dataStream,
-                    nonce,
-                    formState
-                  ),
-                  getServerInsertedHTML,
-                }),
-              }
+            // we are static
+            return {
+              stream: await continueStaticPrerender(stream, {
+                inlinedDataStream: createInlinedDataReadableStream(
+                  dataStream,
+                  nonce,
+                  formState
+                ),
+                getServerInsertedHTML,
+              }),
             }
           }
+
+          // // First we check if we have any dynamic holes in our HTML prerender
+          // if (usedDynamicAPIs(prerenderState)) {
+          //   if (postponed != null) {
+          //     // This is the Dynamic HTML case.
+          //     metadata.postponed = JSON.stringify(
+          //       getDynamicHTMLPostponedState(postponed)
+          //     )
+          //   } else {
+          //     // This is the Dynamic Data case
+          //     metadata.postponed = JSON.stringify(
+          //       getDynamicDataPostponedState()
+          //     )
+          //   }
+          //   // Regardless of whether this is the Dynamic HTML or Dynamic Data case we need to ensure we include
+          //   // server inserted html in the static response because the html that is part of the prerender may depend on it
+          //   // It is possible in the set of stream transforms for Dynamic HTML vs Dynamic Data may differ but currently both states
+          //   // require the same set so we unify the code path here
+          //   return {
+          //     stream: await continueDynamicPrerender(stream, {
+          //       getServerInsertedHTML,
+          //     }),
+          //   }
+          // } else {
+          //   // We may still be rendering the RSC stream even though the HTML is finished.
+          //   // We wait for the RSC stream to complete and check again if dynamic was used
+          //   const [original, flightSpy] = dataStream.tee()
+          //   dataStream = original
+
+          //   await flightRenderComplete(flightSpy)
+
+          //   if (usedDynamicAPIs(prerenderState)) {
+          //     // This is the same logic above just repeated after ensuring the RSC stream itself has completed
+          //     if (postponed != null) {
+          //       // This is the Dynamic HTML case.
+          //       metadata.postponed = JSON.stringify(
+          //         getDynamicHTMLPostponedState(postponed)
+          //       )
+          //     } else {
+          //       // This is the Dynamic Data case
+          //       metadata.postponed = JSON.stringify(
+          //         getDynamicDataPostponedState()
+          //       )
+          //     }
+          //     // Regardless of whether this is the Dynamic HTML or Dynamic Data case we need to ensure we include
+          //     // server inserted html in the static response because the html that is part of the prerender may depend on it
+          //     // It is possible in the set of stream transforms for Dynamic HTML vs Dynamic Data may differ but currently both states
+          //     // require the same set so we unify the code path here
+          //     return {
+          //       stream: await continueDynamicPrerender(stream, {
+          //         getServerInsertedHTML,
+          //       }),
+          //     }
+          //   } else {
+          //     // This is the Static case
+          //     // We still have not used any dynamic APIs. At this point we can produce an entirely static prerender response
+          //     let renderedHTMLStream = stream
+
+          //     if (staticGenerationStore.forceDynamic) {
+          //       throw new StaticGenBailoutError(
+          //         'Invariant: a Page with `dynamic = "force-dynamic"` did not trigger the dynamic pathway. This is a bug in Next.js'
+          //       )
+          //     }
+
+          //     if (postponed != null) {
+          //       // We postponed but nothing dynamic was used. We resume the render now and immediately abort it
+          //       // so we can set all the postponed boundaries to client render mode before we store the HTML response
+          //       const resumeRenderer = createStaticRenderer({
+          //         isRoutePPREnabled,
+          //         isStaticGeneration: false,
+          //         postponed: getDynamicHTMLPostponedState(postponed),
+          //         streamOptions: {
+          //           signal: createPostponedAbortSignal(
+          //             'static prerender resume'
+          //           ),
+          //           onError: htmlRendererErrorHandler,
+          //           nonce,
+          //         },
+          //       })
+
+          //       // We don't actually want to render anything so we just pass a stream
+          //       // that never resolves. The resume call is going to abort immediately anyway
+          //       const foreverStream = new ReadableStream<Uint8Array>()
+
+          //       const resumeChildren = (
+          //         <HeadManagerContext.Provider
+          //           value={{
+          //             appDir: true,
+          //             nonce,
+          //           }}
+          //         >
+          //           <ServerInsertedHTMLProvider>
+          //             <ReactServerEntrypoint
+          //               reactServerStream={foreverStream}
+          //               preinitScripts={() => {}}
+          //               clientReferenceManifest={clientReferenceManifest}
+          //               nonce={nonce}
+          //             />
+          //           </ServerInsertedHTMLProvider>
+          //         </HeadManagerContext.Provider>
+          //       )
+
+          //       const { stream: resumeStream } =
+          //         await resumeRenderer.render(resumeChildren)
+          //       // First we write everything from the prerender, then we write everything from the aborted resume render
+          //       renderedHTMLStream = chainStreams(stream, resumeStream)
+          //     }
+
+          //     return {
+          //       stream: await continueStaticPrerender(renderedHTMLStream, {
+          //         inlinedDataStream: createInlinedDataReadableStream(
+          //           dataStream,
+          //           nonce,
+          //           formState
+          //         ),
+          //         getServerInsertedHTML,
+          //       }),
+          //     }
+          //   }
+          // }
         } else if (renderOpts.postponed) {
           // This is a continuation of either an Incomplete or Dynamic Data Prerender.
           const inlinedDataStream = createInlinedDataReadableStream(

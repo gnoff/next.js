@@ -1869,6 +1869,7 @@ function enqueueFlush(request) {
   }
 }
 function abort(request, reason) {
+  console.log('abort', reason)
   try {
     var abortableTasks = request.abortableTasks;
     if (0 < abortableTasks.size) {

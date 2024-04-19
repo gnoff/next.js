@@ -266,3 +266,13 @@ export function createPostponedAbortSignal(reason: string): AbortSignal {
   }
   return controller.signal
 }
+
+export function getPostponeForAbort(reason: string): unknown {
+  assertPostpone()
+  try {
+    React.unstable_postpone(reason)
+  } catch (x: unknown) {
+    return x
+  }
+  throw new Error('Invariant: React.unstable_postpone did not throw')
+}
