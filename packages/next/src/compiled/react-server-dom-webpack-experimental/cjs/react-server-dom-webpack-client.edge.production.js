@@ -729,6 +729,7 @@ function resolveIteratorResultChunk(chunk, value, done) {
   );
 }
 function resolveModelChunk(chunk, value) {
+  console.log("resolveModelChunk", chunk)
   if ("pending" !== chunk.status) chunk.reason.enqueueModel(value);
   else {
     var resolveListeners = chunk.value,

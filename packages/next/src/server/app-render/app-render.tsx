@@ -117,6 +117,7 @@ import {
 import { createServerModuleMap } from './action-utils'
 import { isNodeNextRequest } from '../base-http/helpers'
 import { parseParameter } from '../../shared/lib/router/utils/route-regex'
+import { scheduleImmediate } from '../../lib/scheduler'
 
 export type GetDynamicParamFromSegment = (
   // [slug] / [[slug]] / [...slug]
@@ -399,22 +400,29 @@ type RenderToStreamOptions = {
  */
 function createFlightDataResolver(ctx: AppRenderContext) {
   // Generate the flight data and as soon as it can, convert it into a string.
-  const promise = generateFlight(ctx)
-    .then(async (result) => ({
-      flightData: await result.toUnchunkedString(true),
-    }))
-    // Otherwise if it errored, return the error.
-    .catch((err) => ({ err }))
+  // const promise = generateFlight(ctx)
+  //   .then(async (result) => ({
+  //     flightData: await result.toUnchunkedString(true),
+  //   }))
+  //   // Otherwise if it errored, return the error.
+  //   .catch((err) => ({ err }))
 
   return async () => {
     // Resolve the promise to get the flight data or error.
-    const result = await promise
+    console.log('------------------------- generateFlight ----')
+    const result = await generateFlight(ctx)
+      .then(async (result) => ({
+        flightData: await result.toUnchunkedString(true),
+      }))
+      // Otherwise if it errored, return the error.
+      .catch((err) => ({ err }))
 
     // If the flight data failed to render due to an error, re-throw the error
     // here.
     if ('err' in result) {
       throw result.err
     }
+    console.log('------------------------- generateFlight done ----')
 
     // Otherwise, return the flight data.
     return result.flightData
@@ -627,7 +635,8 @@ async function renderToHTMLOrFlightImpl(
   query: NextParsedUrlQuery,
   renderOpts: RenderOpts,
   baseCtx: AppRenderBaseContext,
-  requestEndedState: { ended?: boolean }
+  requestEndedState: { ended?: boolean },
+  flightController: null | AbortController
 ) {
   const isNotFoundPath = pagePath === '/404'
 
@@ -951,22 +960,37 @@ async function renderToHTMLOrFlightImpl(
         nonce
       )
 
-      let serverStream
-      if (isStaticGeneration && process.env.__NEXT_IODYNAMIC) {
+      const ioIsDynamic = process.env.__NEXT_IODYNAMIC
+
+      let serverStream, reactServerIsDynamic
+      if (isStaticGeneration && ioIsDynamic && flightController) {
         console.log('__IO DYNAMIC__')
-        const reason = getPostponedReason('prerender complete')
-        const controller = new AbortController()
+        const PRERENDER_COMPLETE = 'NEXT_PRERENDER_COMPLETE'
+        const postponeReason = getPostponedReason(PRERENDER_COMPLETE)
+        function onPostpone(reason: string) {
+          console.log('onPostpone', reason)
+          if (reason === PRERENDER_COMPLETE) {
+            reactServerIsDynamic = true
+          }
+        }
         serverStream = ComponentMod.renderToReadableStream(
           <ReactServerApp tree={tree} ctx={ctx} asNotFound={asNotFound} />,
           clientReferenceManifest.clientModules,
           {
             onError: serverComponentsErrorHandler,
             nonce,
-            signal: controller.signal,
+            signal: flightController.signal,
+            onPostpone,
           }
         )
-        await new Promise((r) => setImmediate(r))
-        controller.abort(reason)
+        // We would normally use scheduleImmediate to take advantage of setImmediate in Node however
+        // the edge builds use setTimeout and we use those even when running in node at the moment.
+        // This presents a problem where for node our abort will end up firing before the first tick of
+        // rendering because while it is scheduled after it is prioritized first. Once we start using React's
+        // node render methods we can switch to setImmediate (via scheduleImmediate) here.
+        await new Promise<void>((r) => setTimeout(r, 0))
+        flightController.abort(postponeReason)
+        console.log('reactServerIsDynamic', reactServerIsDynamic)
       } else {
         console.log('__normal path__')
         // We kick off the Flight Request (render) here. It is ok to initiate the render in an arbitrary
@@ -1070,7 +1094,10 @@ async function renderToHTMLOrFlightImpl(
            */
 
           // First we check if we have any dynamic holes in our HTML prerender
-          if (usedDynamicAPIs(prerenderState)) {
+          if (
+            usedDynamicAPIs(prerenderState) ||
+            (ioIsDynamic && reactServerIsDynamic)
+          ) {
             if (postponed != null) {
               // This is the Dynamic HTML case.
               metadata.postponed = JSON.stringify(
@@ -1099,7 +1126,10 @@ async function renderToHTMLOrFlightImpl(
 
             await flightRenderComplete(flightSpy)
 
-            if (usedDynamicAPIs(prerenderState)) {
+            if (
+              usedDynamicAPIs(prerenderState) ||
+              (ioIsDynamic && reactServerIsDynamic)
+            ) {
               // This is the same logic above just repeated after ensuring the RSC stream itself has completed
               if (postponed != null) {
                 // This is the Dynamic HTML case.
@@ -1230,6 +1260,7 @@ async function renderToHTMLOrFlightImpl(
           }
         }
       } catch (err) {
+        console.log('err', err)
         if (
           isStaticGenBailoutError(err) ||
           (typeof err === 'object' &&
@@ -1521,6 +1552,10 @@ export const renderToHTMLOrFlight: AppPageRender = (
   // TODO: this includes query string, should it?
   const pathname = validateURL(req.url)
 
+  let flightController = process.env.__NEXT_IODYNAMIC
+    ? new AbortController()
+    : null
+
   return RequestAsyncStorageWrapper.wrap(
     renderOpts.ComponentMod.requestAsyncStorage,
     { req, res, renderOpts },
@@ -1531,6 +1566,7 @@ export const renderToHTMLOrFlight: AppPageRender = (
           urlPathname: pathname,
           renderOpts,
           requestEndedState: { ended: false },
+          flightController,
         },
         (staticGenerationStore) =>
           renderToHTMLOrFlightImpl(
@@ -1545,7 +1581,8 @@ export const renderToHTMLOrFlight: AppPageRender = (
               componentMod: renderOpts.ComponentMod,
               renderOpts,
             },
-            staticGenerationStore.requestEndedState || {}
+            staticGenerationStore.requestEndedState || {},
+            flightController
           )
       )
   )

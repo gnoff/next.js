@@ -514,118 +514,236 @@ export async function exportAppImpl(
 
   const failedExportAttemptsByPage: Map<string, number> = new Map()
   const maxAttempts = nextConfig.experimental.staticGenerationRetryCount ?? 1
-  const results = await Promise.all(
-    filteredPaths.map(async (path) => {
-      const pathMap = exportPathMap[path]
-      const exportPage = pathMap._isAppDir
-        ? options.exportAppPageWorker
-        : options.exportPageWorker
+  // const results = await Promise.all(
+  //   filteredPaths.map(async (path) => {
+  //     const pathMap = exportPathMap[path]
+  //     const exportPage = pathMap._isAppDir
+  //       ? options.exportAppPageWorker
+  //       : options.exportPageWorker
 
-      if (!exportPage) {
-        throw new Error(
-          'Invariant: Undefined export worker for app dir, this is a bug in Next.js.'
-        )
-      }
+  //     if (!exportPage) {
+  //       throw new Error(
+  //         'Invariant: Undefined export worker for app dir, this is a bug in Next.js.'
+  //       )
+  //     }
 
-      const pageExportSpan = span.traceChild('export-page')
-      pageExportSpan.setAttribute('path', path)
-      const { page } = exportPathMap[path]
-      const pageKey = page !== path ? `${page}: ${path}` : path
+  //     const pageExportSpan = span.traceChild('export-page')
+  //     pageExportSpan.setAttribute('path', path)
+  //     const { page } = exportPathMap[path]
+  //     const pageKey = page !== path ? `${page}: ${path}` : path
 
-      let result
+  //     let result
 
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        try {
-          result = await pageExportSpan.traceAsyncFn(async () => {
-            return await exportPage({
-              dir,
-              path,
-              pathMap,
-              distDir,
-              outDir,
-              pagesDataDir,
-              renderOpts,
-              ampValidatorPath:
-                nextConfig.experimental.amp?.validator || undefined,
-              trailingSlash: nextConfig.trailingSlash,
-              serverRuntimeConfig,
-              subFolders,
-              buildExport: options.buildExport,
-              optimizeFonts: nextConfig.optimizeFonts as FontConfig,
-              optimizeCss: nextConfig.experimental.optimizeCss,
-              disableOptimizedLoading:
-                nextConfig.experimental.disableOptimizedLoading,
-              parentSpanId: pageExportSpan.getId(),
-              httpAgentOptions: nextConfig.httpAgentOptions,
-              debugOutput: options.debugOutput,
-              cacheMaxMemorySize: nextConfig.cacheMaxMemorySize,
-              fetchCache: true,
-              fetchCacheKeyPrefix: nextConfig.experimental.fetchCacheKeyPrefix,
-              cacheHandler: nextConfig.cacheHandler,
-              enableExperimentalReact: needsExperimentalReact(nextConfig),
-              enabledDirectories,
-            })
+  //     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  //       try {
+  //         result = await pageExportSpan.traceAsyncFn(async () => {
+  //           return await exportPage({
+  //             dir,
+  //             path,
+  //             pathMap,
+  //             distDir,
+  //             outDir,
+  //             pagesDataDir,
+  //             renderOpts,
+  //             ampValidatorPath:
+  //               nextConfig.experimental.amp?.validator || undefined,
+  //             trailingSlash: nextConfig.trailingSlash,
+  //             serverRuntimeConfig,
+  //             subFolders,
+  //             buildExport: options.buildExport,
+  //             optimizeFonts: nextConfig.optimizeFonts as FontConfig,
+  //             optimizeCss: nextConfig.experimental.optimizeCss,
+  //             disableOptimizedLoading:
+  //               nextConfig.experimental.disableOptimizedLoading,
+  //             parentSpanId: pageExportSpan.getId(),
+  //             httpAgentOptions: nextConfig.httpAgentOptions,
+  //             debugOutput: options.debugOutput,
+  //             cacheMaxMemorySize: nextConfig.cacheMaxMemorySize,
+  //             fetchCache: true,
+  //             fetchCacheKeyPrefix: nextConfig.experimental.fetchCacheKeyPrefix,
+  //             cacheHandler: nextConfig.cacheHandler,
+  //             enableExperimentalReact: needsExperimentalReact(nextConfig),
+  //             enabledDirectories,
+  //           })
+  //         })
+
+  //         // If there was an error in the export, throw it immediately. In the catch block, we might retry the export,
+  //         // or immediately fail the build, depending on user configuration. We might also continue on and attempt other pages.
+  //         if (result && 'error' in result) {
+  //           throw new ExportError()
+  //         }
+
+  //         // If the export succeeds, break out of the retry loop
+  //         break
+  //       } catch (err) {
+  //         // The only error that should be caught here is an ExportError, as `exportPage` doesn't throw and instead returns an object with an `error` property.
+  //         // This is an overly cautious check to ensure that we don't accidentally catch an unexpected error.
+  //         if (!(err instanceof ExportError)) {
+  //           throw err
+  //         }
+
+  //         const currentCount = failedExportAttemptsByPage.get(pageKey) ?? 0
+  //         failedExportAttemptsByPage.set(pageKey, currentCount + 1)
+
+  //         // We've reached the maximum number of attempts
+  //         if (attempt >= maxAttempts - 1) {
+  //           // Log a message if we've reached the maximum number of attempts.
+  //           // We only care to do this if maxAttempts was configured.
+  //           if (maxAttempts > 0) {
+  //             Log.info(
+  //               `Failed to build ${pageKey} after ${maxAttempts} attempts.`
+  //             )
+  //           }
+  //           // If prerenderEarlyExit is enabled, we'll exit the build immediately.
+  //           if (nextConfig.experimental.prerenderEarlyExit) {
+  //             throw new ExportError(
+  //               `Export encountered an error on ${pageKey}, exiting the build.`
+  //             )
+  //           } else {
+  //             // Otherwise, this is a no-op. The build will continue, and a summary of failed pages will be displayed at the end.
+  //           }
+  //         } else {
+  //           // Otherwise, we have more attempts to make. Wait before retrying
+  //           Log.info(
+  //             `Failed to build ${pageKey} (attempt ${attempt + 1} of ${maxAttempts}). Retrying again shortly.`
+  //           )
+  //           await new Promise((r) => setTimeout(r, Math.random() * 500))
+  //         }
+  //       }
+  //     }
+
+  //     // if we eventually succeeded, remove the page from the failed attempts map
+  //     if (
+  //       failedExportAttemptsByPage.has(pageKey) &&
+  //       result &&
+  //       !('error' in result)
+  //     ) {
+  //       failedExportAttemptsByPage.delete(pageKey)
+  //     }
+
+  //     if (progress) progress()
+
+  //     return { result, path }
+  //   })
+  // )
+
+  async function exportPath(path: string) {
+    const pathMap = exportPathMap[path]
+    const exportPage = pathMap._isAppDir
+      ? options.exportAppPageWorker
+      : options.exportPageWorker
+
+    if (!exportPage) {
+      throw new Error(
+        'Invariant: Undefined export worker for app dir, this is a bug in Next.js.'
+      )
+    }
+
+    const pageExportSpan = span.traceChild('export-page')
+    pageExportSpan.setAttribute('path', path)
+    const { page } = exportPathMap[path]
+    const pageKey = page !== path ? `${page}: ${path}` : path
+
+    let result
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        result = await pageExportSpan.traceAsyncFn(async () => {
+          return await exportPage({
+            dir,
+            path,
+            pathMap,
+            distDir,
+            outDir,
+            pagesDataDir,
+            renderOpts,
+            ampValidatorPath:
+              nextConfig.experimental.amp?.validator || undefined,
+            trailingSlash: nextConfig.trailingSlash,
+            serverRuntimeConfig,
+            subFolders,
+            buildExport: options.buildExport,
+            optimizeFonts: nextConfig.optimizeFonts as FontConfig,
+            optimizeCss: nextConfig.experimental.optimizeCss,
+            disableOptimizedLoading:
+              nextConfig.experimental.disableOptimizedLoading,
+            parentSpanId: pageExportSpan.getId(),
+            httpAgentOptions: nextConfig.httpAgentOptions,
+            debugOutput: options.debugOutput,
+            cacheMaxMemorySize: nextConfig.cacheMaxMemorySize,
+            fetchCache: true,
+            fetchCacheKeyPrefix: nextConfig.experimental.fetchCacheKeyPrefix,
+            cacheHandler: nextConfig.cacheHandler,
+            enableExperimentalReact: needsExperimentalReact(nextConfig),
+            enabledDirectories,
           })
+        })
 
-          // If there was an error in the export, throw it immediately. In the catch block, we might retry the export,
-          // or immediately fail the build, depending on user configuration. We might also continue on and attempt other pages.
-          if (result && 'error' in result) {
-            throw new ExportError()
-          }
+        // If there was an error in the export, throw it immediately. In the catch block, we might retry the export,
+        // or immediately fail the build, depending on user configuration. We might also continue on and attempt other pages.
+        if (result && 'error' in result) {
+          throw new ExportError()
+        }
 
-          // If the export succeeds, break out of the retry loop
-          break
-        } catch (err) {
-          // The only error that should be caught here is an ExportError, as `exportPage` doesn't throw and instead returns an object with an `error` property.
-          // This is an overly cautious check to ensure that we don't accidentally catch an unexpected error.
-          if (!(err instanceof ExportError)) {
-            throw err
-          }
+        // If the export succeeds, break out of the retry loop
+        break
+      } catch (err) {
+        // The only error that should be caught here is an ExportError, as `exportPage` doesn't throw and instead returns an object with an `error` property.
+        // This is an overly cautious check to ensure that we don't accidentally catch an unexpected error.
+        if (!(err instanceof ExportError)) {
+          throw err
+        }
 
-          const currentCount = failedExportAttemptsByPage.get(pageKey) ?? 0
-          failedExportAttemptsByPage.set(pageKey, currentCount + 1)
+        const currentCount = failedExportAttemptsByPage.get(pageKey) ?? 0
+        failedExportAttemptsByPage.set(pageKey, currentCount + 1)
 
-          // We've reached the maximum number of attempts
-          if (attempt >= maxAttempts - 1) {
-            // Log a message if we've reached the maximum number of attempts.
-            // We only care to do this if maxAttempts was configured.
-            if (maxAttempts > 0) {
-              Log.info(
-                `Failed to build ${pageKey} after ${maxAttempts} attempts.`
-              )
-            }
-            // If prerenderEarlyExit is enabled, we'll exit the build immediately.
-            if (nextConfig.experimental.prerenderEarlyExit) {
-              throw new ExportError(
-                `Export encountered an error on ${pageKey}, exiting the build.`
-              )
-            } else {
-              // Otherwise, this is a no-op. The build will continue, and a summary of failed pages will be displayed at the end.
-            }
-          } else {
-            // Otherwise, we have more attempts to make. Wait before retrying
+        // We've reached the maximum number of attempts
+        if (attempt >= maxAttempts - 1) {
+          // Log a message if we've reached the maximum number of attempts.
+          // We only care to do this if maxAttempts was configured.
+          if (maxAttempts > 0) {
             Log.info(
-              `Failed to build ${pageKey} (attempt ${attempt + 1} of ${maxAttempts}). Retrying again shortly.`
+              `Failed to build ${pageKey} after ${maxAttempts} attempts.`
             )
-            await new Promise((r) => setTimeout(r, Math.random() * 500))
           }
+          // If prerenderEarlyExit is enabled, we'll exit the build immediately.
+          if (nextConfig.experimental.prerenderEarlyExit) {
+            throw new ExportError(
+              `Export encountered an error on ${pageKey}, exiting the build.`
+            )
+          } else {
+            // Otherwise, this is a no-op. The build will continue, and a summary of failed pages will be displayed at the end.
+          }
+        } else {
+          // Otherwise, we have more attempts to make. Wait before retrying
+          Log.info(
+            `Failed to build ${pageKey} (attempt ${attempt + 1} of ${maxAttempts}). Retrying again shortly.`
+          )
+          await new Promise((r) => setTimeout(r, Math.random() * 500))
         }
       }
+    }
 
-      // if we eventually succeeded, remove the page from the failed attempts map
-      if (
-        failedExportAttemptsByPage.has(pageKey) &&
-        result &&
-        !('error' in result)
-      ) {
-        failedExportAttemptsByPage.delete(pageKey)
-      }
+    // if we eventually succeeded, remove the page from the failed attempts map
+    if (
+      failedExportAttemptsByPage.has(pageKey) &&
+      result &&
+      !('error' in result)
+    ) {
+      failedExportAttemptsByPage.delete(pageKey)
+    }
 
-      if (progress) progress()
+    if (progress) progress()
 
-      return { result, path }
-    })
-  )
+    return { result, path }
+  }
+
+  let results = new Array(filteredPaths.length)
+  for (let i = 0; i < filteredPaths.length; i++) {
+    console.log(`==============${filteredPaths[i]}===============`)
+    results[i] = await exportPath(filteredPaths[i])
+    console.log(`============== DONE ===============`)
+  }
 
   let hadValidationError = false
 

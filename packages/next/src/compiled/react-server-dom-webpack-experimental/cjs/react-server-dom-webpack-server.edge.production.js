@@ -1804,6 +1804,7 @@ function retryTask(request, task) {
     }
 }
 function performWork(request) {
+  console.log('performWork')
   var prevDispatcher = ReactSharedInternalsServer.H;
   ReactSharedInternalsServer.H = HooksDispatcher;
   var prevRequest = currentRequest;
@@ -1864,9 +1865,11 @@ function flushCompletedChunks(request, destination) {
     (request.destination = null));
 }
 function startWork(request) {
+  console.log('startWork', new Error().stack)
   request.flushScheduled = null !== request.destination;
   supportsRequestStorage
     ? setTimeout(function () {
+        console.log('work starting')
         return requestStorage.run(request, performWork, request);
       }, 0)
     : setTimeout(function () {

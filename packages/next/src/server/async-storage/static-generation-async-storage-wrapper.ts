@@ -48,6 +48,7 @@ export type StaticGenerationContext = {
     | 'isDebugPPRSkeleton'
   > &
     Partial<RequestLifecycleOpts>
+  flightController: null | AbortController
 }
 
 export const StaticGenerationAsyncStorageWrapper: AsyncStorageWrapper<
@@ -56,7 +57,12 @@ export const StaticGenerationAsyncStorageWrapper: AsyncStorageWrapper<
 > = {
   wrap<Result>(
     storage: AsyncLocalStorage<StaticGenerationStore>,
-    { urlPathname, renderOpts, requestEndedState }: StaticGenerationContext,
+    {
+      urlPathname,
+      renderOpts,
+      requestEndedState,
+      flightController,
+    }: StaticGenerationContext,
     callback: (store: StaticGenerationStore) => Result
   ): Result {
     /**
@@ -83,7 +89,7 @@ export const StaticGenerationAsyncStorageWrapper: AsyncStorageWrapper<
 
     const prerenderState: StaticGenerationStore['prerenderState'] =
       isStaticGeneration && renderOpts.experimental?.isRoutePPREnabled
-        ? createPrerenderState(renderOpts.isDebugPPRSkeleton)
+        ? createPrerenderState(renderOpts.isDebugPPRSkeleton, flightController)
         : null
 
     const store: StaticGenerationStore = {

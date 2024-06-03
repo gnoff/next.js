@@ -28,6 +28,8 @@ import { DynamicServerError } from '../../client/components/hooks-server-context
 import { StaticGenBailoutError } from '../../client/components/static-generation-bailout'
 import { getPathname } from '../../lib/url'
 
+const ioIsDynamic = Boolean(process.env.__NEXT_IODYNAMIC)
+
 const hasPostpone = typeof React.unstable_postpone === 'function'
 
 type DynamicAccess = {
@@ -55,14 +57,21 @@ export type PrerenderState = {
    * The dynamic accesses that occurred during the render.
    */
   readonly dynamicAccesses: DynamicAccess[]
+
+  /**
+   * if available the abort controller for the RSC render
+   */
+  readonly flightController: null | AbortController
 }
 
 export function createPrerenderState(
-  isDebugSkeleton: boolean | undefined
+  isDebugSkeleton: boolean | undefined,
+  flightController: null | AbortController
 ): PrerenderState {
   return {
     isDebugSkeleton,
     dynamicAccesses: [],
+    flightController,
   }
 }
 
@@ -190,15 +199,34 @@ function postponeWithTracking(
     `Route ${pathname} needs to bail out of prerendering at this point because it used ${expression}. ` +
     `React throws this special object to indicate where. It should not be caught by ` +
     `your own try/catch. Learn more: https://nextjs.org/docs/messages/ppr-caught-error`
+  if (ioIsDynamic) {
+    console.log(
+      'postponing wtih flightController',
+      prerenderState.flightController
+    )
+    const controller = prerenderState.flightController
+    if (controller) {
+      try {
+        React.unstable_postpone('NEXT_PRERENDER_COMPLETE')
+      } catch (e) {
+        controller.abort(e)
+      }
+    }
+    // this function is never typed but we probably want the ioIsDynamic case to
+    // not throw at all. This will require refactoring callers so they can return empty
+    // objects like empty cookies/headers etc....
+    // For now we continue to throw
+    React.unstable_postpone(reason)
+  } else {
+    prerenderState.dynamicAccesses.push({
+      // When we aren't debugging, we don't need to create another error for the
+      // stack trace.
+      stack: prerenderState.isDebugSkeleton ? new Error().stack : undefined,
+      expression,
+    })
 
-  prerenderState.dynamicAccesses.push({
-    // When we aren't debugging, we don't need to create another error for the
-    // stack trace.
-    stack: prerenderState.isDebugSkeleton ? new Error().stack : undefined,
-    expression,
-  })
-
-  React.unstable_postpone(reason)
+    React.unstable_postpone(reason)
+  }
 }
 
 export function usedDynamicAPIs(prerenderState: PrerenderState): boolean {
