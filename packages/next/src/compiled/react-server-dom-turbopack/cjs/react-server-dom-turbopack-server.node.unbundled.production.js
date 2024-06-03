@@ -14,6 +14,7 @@ require("crypto");
 var async_hooks = require("async_hooks"),
   ReactDOM = require("react-dom"),
   React = require("react"),
+  scheduleMicrotask = queueMicrotask,
   currentView = null,
   writtenBytes = 0,
   destinationHasCapacity = !0;
@@ -436,9 +437,9 @@ var REACT_LEGACY_ELEMENT_TYPE = Symbol.for("react.element"),
   REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list"),
   REACT_MEMO_TYPE = Symbol.for("react.memo"),
   REACT_LAZY_TYPE = Symbol.for("react.lazy"),
-  REACT_MEMO_CACHE_SENTINEL = Symbol.for("react.memo_cache_sentinel");
-Symbol.for("react.postpone");
-var MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
+  REACT_MEMO_CACHE_SENTINEL = Symbol.for("react.memo_cache_sentinel"),
+  REACT_POSTPONE_TYPE = Symbol.for("react.postpone"),
+  MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
 function getIteratorFn(maybeIterable) {
   if (null === maybeIterable || "object" !== typeof maybeIterable) return null;
   maybeIterable =
@@ -707,7 +708,29 @@ if (!ReactSharedInternalsServer)
     'The "react" package in this environment is not configured correctly. The "react-server" condition must be enabled in any environment that runs React Server Components.'
   );
 var ObjectPrototype = Object.prototype,
-  stringify = JSON.stringify;
+  stringify = JSON.stringify,
+  TaintRegistryObjects = ReactSharedInternalsServer.TaintRegistryObjects,
+  TaintRegistryValues = ReactSharedInternalsServer.TaintRegistryValues,
+  TaintRegistryByteLengths =
+    ReactSharedInternalsServer.TaintRegistryByteLengths,
+  TaintRegistryPendingRequests =
+    ReactSharedInternalsServer.TaintRegistryPendingRequests;
+function throwTaintViolation(message) {
+  throw Error(message);
+}
+function cleanupTaintQueue(request) {
+  request = request.taintCleanupQueue;
+  TaintRegistryPendingRequests.delete(request);
+  for (var i = 0; i < request.length; i++) {
+    var entryValue = request[i],
+      entry = TaintRegistryValues.get(entryValue);
+    void 0 !== entry &&
+      (1 === entry.count
+        ? TaintRegistryValues.delete(entryValue)
+        : entry.count--);
+  }
+  request.length = 0;
+}
 function defaultErrorHandler(error) {
   console.error(error);
 }
@@ -729,6 +752,8 @@ function createRequest(
   ReactSharedInternalsServer.A = DefaultAsyncDispatcher;
   var abortSet = new Set();
   environmentName = [];
+  var cleanupQueue = [];
+  TaintRegistryPendingRequests.add(cleanupQueue);
   var hints = new Set();
   bundlerConfig = {
     status: 0,
@@ -754,7 +779,7 @@ function createRequest(
     temporaryReferences: temporaryReferences,
     identifierPrefix: identifierPrefix || "",
     identifierCount: 1,
-    taintCleanupQueue: [],
+    taintCleanupQueue: cleanupQueue,
     onError: void 0 === onError ? defaultErrorHandler : onError,
     onPostpone: void 0 === onPostpone ? defaultPostponeHandler : onPostpone
   };
@@ -783,8 +808,14 @@ function serializeThenable(request, task, thenable) {
       );
     case "rejected":
       return (
-        (task = logRecoverableError(request, thenable.reason)),
-        emitErrorChunk(request, newTask.id, task),
+        (task = thenable.reason),
+        "object" === typeof task &&
+        null !== task &&
+        task.$$typeof === REACT_POSTPONE_TYPE
+          ? (logPostpone(request, task.message),
+            emitPostponeChunk(request, newTask.id))
+          : ((task = logRecoverableError(request, task)),
+            emitErrorChunk(request, newTask.id, task)),
         newTask.id
       );
     default:
@@ -808,9 +839,14 @@ function serializeThenable(request, task, thenable) {
       pingTask(request, newTask);
     },
     function (reason) {
-      newTask.status = 4;
-      reason = logRecoverableError(request, reason);
-      emitErrorChunk(request, newTask.id, reason);
+      "object" === typeof reason &&
+      null !== reason &&
+      reason.$$typeof === REACT_POSTPONE_TYPE
+        ? (logPostpone(request, reason.message),
+          emitPostponeChunk(request, newTask.id))
+        : ((newTask.status = 4),
+          (reason = logRecoverableError(request, reason)),
+          emitErrorChunk(request, newTask.id, reason));
       request.abortableTasks.delete(newTask);
       enqueueFlush(request);
     }
@@ -833,16 +869,25 @@ function serializeReadableStream(request, task, stream) {
             emitChunk(request, streamTask, streamTask.model),
             enqueueFlush(request),
             reader.read().then(progress, error);
-        } catch (x$8) {
-          error(x$8);
+        } catch (x$9) {
+          error(x$9);
         }
   }
   function error(reason) {
     if (!aborted) {
       aborted = !0;
       request.abortListeners.delete(error);
-      var digest = logRecoverableError(request, reason);
-      emitErrorChunk(request, streamTask.id, digest);
+      if (
+        "object" === typeof reason &&
+        null !== reason &&
+        reason.$$typeof === REACT_POSTPONE_TYPE
+      )
+        logPostpone(request, reason.message),
+          emitPostponeChunk(request, streamTask.id);
+      else {
+        var digest = logRecoverableError(request, reason);
+        emitErrorChunk(request, streamTask.id, digest);
+      }
       enqueueFlush(request);
       reader.cancel(reason).then(error, error);
     }
@@ -900,16 +945,25 @@ function serializeAsyncIterable(request, task, iterable, iterator) {
             emitChunk(request, streamTask, streamTask.model),
             enqueueFlush(request),
             iterator.next().then(progress, error);
-        } catch (x$9) {
-          error(x$9);
+        } catch (x$10) {
+          error(x$10);
         }
   }
   function error(reason) {
     if (!aborted) {
       aborted = !0;
       request.abortListeners.delete(error);
-      var digest = logRecoverableError(request, reason);
-      emitErrorChunk(request, streamTask.id, digest);
+      if (
+        "object" === typeof reason &&
+        null !== reason &&
+        reason.$$typeof === REACT_POSTPONE_TYPE
+      )
+        logPostpone(request, reason.message),
+          emitPostponeChunk(request, streamTask.id);
+      else {
+        var digest = logRecoverableError(request, reason);
+        emitErrorChunk(request, streamTask.id, digest);
+      }
       enqueueFlush(request);
       "function" === typeof iterator.throw &&
         iterator.throw(reason).then(error, error);
@@ -973,7 +1027,11 @@ function renderFunctionComponent(request, task, key, Component, props) {
   thenableIndexCounter = 0;
   thenableState = prevThenableState;
   Component = Component(props, void 0);
-  if ("object" === typeof Component && null !== Component) {
+  if (
+    "object" === typeof Component &&
+    null !== Component &&
+    Component.$$typeof !== CLIENT_REFERENCE_TAG$1
+  ) {
     if ("function" === typeof Component.then) {
       props = Component;
       if ("fulfilled" === props.status) return props.value;
@@ -995,11 +1053,11 @@ function renderFunctionComponent(request, task, key, Component, props) {
           Component instanceof ReadableStream)
       )
     ) {
-      var iterableChild$10 = Component;
+      var iterableChild$11 = Component;
       Component = {};
       Component =
         ((Component[ASYNC_ITERATOR] = function () {
-          return iterableChild$10[ASYNC_ITERATOR]();
+          return iterableChild$11[ASYNC_ITERATOR]();
         }),
         Component);
     }
@@ -1082,7 +1140,7 @@ function pingTask(request, task) {
   pingedTasks.push(task);
   1 === pingedTasks.length &&
     ((request.flushScheduled = null !== request.destination),
-    setImmediate(function () {
+    scheduleMicrotask(function () {
       return performWork(request);
     }));
 }
@@ -1104,62 +1162,77 @@ function createTask(request, model, keyPath, implicitSlot, abortSet) {
       return pingTask(request, task);
     },
     toJSON: function (parentPropertyName, value) {
-      var prevKeyPath = task.keyPath,
-        prevImplicitSlot = task.implicitSlot;
-      try {
-        var JSCompiler_inline_result = renderModelDestructive(
-          request,
-          task,
-          this,
-          parentPropertyName,
-          value
-        );
-      } catch (thrownValue) {
-        if (
-          ((parentPropertyName =
+      a: {
+        var prevKeyPath = task.keyPath,
+          prevImplicitSlot = task.implicitSlot;
+        try {
+          var JSCompiler_inline_result = renderModelDestructive(
+            request,
+            task,
+            this,
+            parentPropertyName,
+            value
+          );
+        } catch (thrownValue) {
+          parentPropertyName =
             thrownValue === SuspenseException
               ? getSuspendedThenable()
-              : thrownValue),
-          (value = task.model),
-          (value =
+              : thrownValue;
+          value = task.model;
+          value =
             "object" === typeof value &&
             null !== value &&
             (value.$$typeof === REACT_ELEMENT_TYPE ||
-              value.$$typeof === REACT_LAZY_TYPE)),
-          "object" === typeof parentPropertyName &&
-            null !== parentPropertyName &&
-            "function" === typeof parentPropertyName.then)
-        ) {
-          JSCompiler_inline_result = createTask(
-            request,
-            task.model,
-            task.keyPath,
-            task.implicitSlot,
-            request.abortableTasks
-          );
-          var ping = JSCompiler_inline_result.ping;
-          parentPropertyName.then(ping, ping);
-          JSCompiler_inline_result.thenableState =
-            getThenableStateAfterSuspending();
+              value.$$typeof === REACT_LAZY_TYPE);
+          if (
+            "object" === typeof parentPropertyName &&
+            null !== parentPropertyName
+          ) {
+            if ("function" === typeof parentPropertyName.then) {
+              JSCompiler_inline_result = createTask(
+                request,
+                task.model,
+                task.keyPath,
+                task.implicitSlot,
+                request.abortableTasks
+              );
+              var ping = JSCompiler_inline_result.ping;
+              parentPropertyName.then(ping, ping);
+              JSCompiler_inline_result.thenableState =
+                getThenableStateAfterSuspending();
+              task.keyPath = prevKeyPath;
+              task.implicitSlot = prevImplicitSlot;
+              JSCompiler_inline_result = value
+                ? "$L" + JSCompiler_inline_result.id.toString(16)
+                : serializeByValueID(JSCompiler_inline_result.id);
+              break a;
+            }
+            if (parentPropertyName.$$typeof === REACT_POSTPONE_TYPE) {
+              request.pendingChunks++;
+              JSCompiler_inline_result = request.nextChunkId++;
+              logPostpone(request, parentPropertyName.message);
+              emitPostponeChunk(request, JSCompiler_inline_result);
+              task.keyPath = prevKeyPath;
+              task.implicitSlot = prevImplicitSlot;
+              JSCompiler_inline_result = value
+                ? "$L" + JSCompiler_inline_result.toString(16)
+                : serializeByValueID(JSCompiler_inline_result);
+              break a;
+            }
+          }
           task.keyPath = prevKeyPath;
           task.implicitSlot = prevImplicitSlot;
-          JSCompiler_inline_result = value
-            ? "$L" + JSCompiler_inline_result.id.toString(16)
-            : serializeByValueID(JSCompiler_inline_result.id);
-        } else if (
-          ((task.keyPath = prevKeyPath),
-          (task.implicitSlot = prevImplicitSlot),
-          value)
-        )
-          request.pendingChunks++,
-            (prevKeyPath = request.nextChunkId++),
-            (prevImplicitSlot = logRecoverableError(
-              request,
-              parentPropertyName
-            )),
-            emitErrorChunk(request, prevKeyPath, prevImplicitSlot),
-            (JSCompiler_inline_result = "$L" + prevKeyPath.toString(16));
-        else throw parentPropertyName;
+          if (value)
+            request.pendingChunks++,
+              (prevKeyPath = request.nextChunkId++),
+              (prevImplicitSlot = logRecoverableError(
+                request,
+                parentPropertyName
+              )),
+              emitErrorChunk(request, prevKeyPath, prevImplicitSlot),
+              (JSCompiler_inline_result = "$L" + prevKeyPath.toString(16));
+          else throw parentPropertyName;
+        }
       }
       return JSCompiler_inline_result;
     },
@@ -1334,6 +1407,8 @@ function renderModelDestructive(
       void 0 !== writtenObjects)
     )
       return "$T" + writtenObjects;
+    writtenObjects = TaintRegistryObjects.get(value);
+    void 0 !== writtenObjects && throwTaintViolation(writtenObjects);
     writtenObjects = request.writtenObjects;
     existingReference = writtenObjects.get(value);
     if ("function" === typeof value.then) {
@@ -1427,21 +1502,21 @@ function renderModelDestructive(
     if ("function" === typeof parentPropertyName)
       return (
         null !== task.keyPath
-          ? ((request = [
+          ? ((value = [
               REACT_ELEMENT_TYPE,
               REACT_FRAGMENT_TYPE,
               task.keyPath,
               { children: value }
             ]),
-            (request = task.implicitSlot ? [request] : request))
+            (value = task.implicitSlot ? [value] : value))
           : ((parentPropertyName = parentPropertyName.call(value)),
-            (request = serializeAsyncIterable(
+            (value = serializeAsyncIterable(
               request,
               task,
               value,
               parentPropertyName
             ))),
-        request
+        value
       );
     request = getPrototypeOf(value);
     if (
@@ -1454,6 +1529,8 @@ function renderModelDestructive(
     return value;
   }
   if ("string" === typeof value) {
+    task = TaintRegistryValues.get(value);
+    void 0 !== task && throwTaintViolation(task.message);
     if (
       "Z" === value[value.length - 1] &&
       parent[parentPropertyName] instanceof Date
@@ -1466,8 +1543,8 @@ function renderModelDestructive(
         emitTextChunk(request, task, value),
         serializeByValueID(task)
       );
-    request = "$" === value[0] ? "$" + value : value;
-    return request;
+    value = "$" === value[0] ? "$" + value : value;
+    return value;
   }
   if ("boolean" === typeof value) return value;
   if ("number" === typeof value)
@@ -1494,7 +1571,7 @@ function renderModelDestructive(
         (task = request.writtenServerReferences),
         (parentPropertyName = task.get(value)),
         void 0 !== parentPropertyName
-          ? (request = "$F" + parentPropertyName.toString(16))
+          ? (value = "$F" + parentPropertyName.toString(16))
           : ((parentPropertyName = value.$$bound),
             (parentPropertyName = {
               id: value.$$id,
@@ -1504,14 +1581,16 @@ function renderModelDestructive(
             }),
             (request = outlineModel(request, parentPropertyName)),
             task.set(value, request),
-            (request = "$F" + request.toString(16))),
-        request
+            (value = "$F" + request.toString(16))),
+        value
       );
     if (
       void 0 !== request.temporaryReferences &&
       ((request = request.temporaryReferences.get(value)), void 0 !== request)
     )
       return "$T" + request;
+    request = TaintRegistryObjects.get(value);
+    void 0 !== request && throwTaintViolation(request);
     if (value.$$typeof === TEMPORARY_REFERENCE_TAG)
       throw Error(
         "Could not reference an opaque temporary reference. This is likely due to misconfiguring the temporaryReferences options on the server."
@@ -1549,13 +1628,27 @@ function renderModelDestructive(
     task.set(value, parentPropertyName);
     return serializeByValueID(parentPropertyName);
   }
-  if ("bigint" === typeof value) return "$n" + value.toString(10);
+  if ("bigint" === typeof value)
+    return (
+      (request = TaintRegistryValues.get(value)),
+      void 0 !== request && throwTaintViolation(request.message),
+      "$n" + value.toString(10)
+    );
   throw Error(
     "Type " +
       typeof value +
       " is not supported in Client Component props." +
       describeObjectForErrorMessage(parent, parentPropertyName)
   );
+}
+function logPostpone(request, reason) {
+  var prevRequest = currentRequest;
+  currentRequest = null;
+  try {
+    requestStorage.run(void 0, request.onPostpone, reason);
+  } finally {
+    currentRequest = prevRequest;
+  }
 }
 function logRecoverableError(request, error) {
   var prevRequest = currentRequest;
@@ -1574,9 +1667,14 @@ function logRecoverableError(request, error) {
   return errorDigest || "";
 }
 function fatalError(request, error) {
+  cleanupTaintQueue(request);
   null !== request.destination
     ? ((request.status = 2), request.destination.destroy(error))
     : ((request.status = 1), (request.fatalError = error));
+}
+function emitPostponeChunk(request, id) {
+  id = id.toString(16) + ":P\n";
+  request.completedErrorChunks.push(id);
 }
 function emitErrorChunk(request, id, digest) {
   digest = { digest: digest };
@@ -1584,14 +1682,27 @@ function emitErrorChunk(request, id, digest) {
   request.completedErrorChunks.push(id);
 }
 function emitTypedArrayChunk(request, id, tag, typedArray) {
+  if (TaintRegistryByteLengths.has(typedArray.byteLength)) {
+    var tainted = TaintRegistryValues.get(
+      String.fromCharCode.apply(
+        String,
+        new Uint8Array(
+          typedArray.buffer,
+          typedArray.byteOffset,
+          typedArray.byteLength
+        )
+      )
+    );
+    void 0 !== tainted && throwTaintViolation(tainted.message);
+  }
   request.pendingChunks++;
   typedArray = new Uint8Array(
     typedArray.buffer,
     typedArray.byteOffset,
     typedArray.byteLength
   );
-  var binaryLength = typedArray.byteLength;
-  id = id.toString(16) + ":" + tag + binaryLength.toString(16) + ",";
+  tainted = typedArray.byteLength;
+  id = id.toString(16) + ":" + tag + tainted.toString(16) + ",";
   request.completedRegularChunks.push(id, typedArray);
 }
 function emitTextChunk(request, id, text) {
@@ -1606,7 +1717,9 @@ function emitTextChunk(request, id, text) {
 function emitChunk(request, task, value) {
   var id = task.id;
   "string" === typeof value
-    ? emitTextChunk(request, id, value)
+    ? ((task = TaintRegistryValues.get(value)),
+      void 0 !== task && throwTaintViolation(task.message),
+      emitTextChunk(request, id, value))
     : value instanceof ArrayBuffer
     ? emitTypedArrayChunk(request, id, "A", new Uint8Array(value))
     : value instanceof Int8Array
@@ -1667,16 +1780,25 @@ function retryTask(request, task) {
         thrownValue === SuspenseException
           ? getSuspendedThenable()
           : thrownValue;
-      if ("object" === typeof x && null !== x && "function" === typeof x.then) {
-        var ping = task.ping;
-        x.then(ping, ping);
-        task.thenableState = getThenableStateAfterSuspending();
-      } else {
-        request.abortableTasks.delete(task);
-        task.status = 4;
-        var digest = logRecoverableError(request, x);
-        emitErrorChunk(request, task.id, digest);
+      if ("object" === typeof x && null !== x) {
+        if ("function" === typeof x.then) {
+          var ping = task.ping;
+          x.then(ping, ping);
+          task.thenableState = getThenableStateAfterSuspending();
+          return;
+        }
+        if (x.$$typeof === REACT_POSTPONE_TYPE) {
+          request.abortableTasks.delete(task);
+          task.status = 4;
+          logPostpone(request, x.message);
+          emitPostponeChunk(request, task.id);
+          return;
+        }
       }
+      request.abortableTasks.delete(task);
+      task.status = 4;
+      var digest = logRecoverableError(request, x);
+      emitErrorChunk(request, task.id, digest);
     } finally {
     }
 }
@@ -1760,7 +1882,9 @@ function flushCompletedChunks(request, destination) {
   }
   "function" === typeof destination.flush && destination.flush();
   0 === request.pendingChunks &&
-    (destination.end(), (request.destination = null));
+    (cleanupTaintQueue(request),
+    destination.end(),
+    (request.destination = null));
 }
 function startWork(request) {
   request.flushScheduled = null !== request.destination;
@@ -1769,17 +1893,15 @@ function startWork(request) {
   });
 }
 function enqueueFlush(request) {
-  if (
-    !1 === request.flushScheduled &&
+  !1 === request.flushScheduled &&
     0 === request.pingedTasks.length &&
-    null !== request.destination
-  ) {
-    var destination = request.destination;
-    request.flushScheduled = !0;
+    null !== request.destination &&
+    ((request.flushScheduled = !0),
     setImmediate(function () {
-      return flushCompletedChunks(request, destination);
-    });
-  }
+      request.flushScheduled = !1;
+      var destination = request.destination;
+      destination && flushCompletedChunks(request, destination);
+    }));
 }
 function startFlowing(request, destination) {
   if (1 === request.status)
@@ -1798,13 +1920,22 @@ function abort(request, reason) {
     var abortableTasks = request.abortableTasks;
     if (0 < abortableTasks.size) {
       request.pendingChunks++;
-      var errorId = request.nextChunkId++,
-        error =
-          void 0 === reason
-            ? Error("The render was aborted by the server without a reason.")
-            : reason,
-        digest = logRecoverableError(request, error);
-      emitErrorChunk(request, errorId, digest, error);
+      var errorId = request.nextChunkId++;
+      if (
+        "object" === typeof reason &&
+        null !== reason &&
+        reason.$$typeof === REACT_POSTPONE_TYPE
+      )
+        logPostpone(request, reason.message),
+          emitPostponeChunk(request, errorId, reason);
+      else {
+        var error =
+            void 0 === reason
+              ? Error("The render was aborted by the server without a reason.")
+              : reason,
+          digest = logRecoverableError(request, error);
+        emitErrorChunk(request, errorId, digest, error);
+      }
       abortableTasks.forEach(function (task) {
         task.status = 3;
         var ref = serializeByValueID(errorId);
@@ -1815,19 +1946,23 @@ function abort(request, reason) {
     }
     var abortListeners = request.abortListeners;
     if (0 < abortListeners.size) {
-      var error$22 =
-        void 0 === reason
+      var error$26 =
+        "object" === typeof reason &&
+        null !== reason &&
+        reason.$$typeof === REACT_POSTPONE_TYPE
+          ? Error("The render was aborted due to being postponed.")
+          : void 0 === reason
           ? Error("The render was aborted by the server without a reason.")
           : reason;
       abortListeners.forEach(function (callback) {
-        return callback(error$22);
+        return callback(error$26);
       });
       abortListeners.clear();
     }
     null !== request.destination &&
       flushCompletedChunks(request, request.destination);
-  } catch (error$23) {
-    logRecoverableError(request, error$23), fatalError(request, error$23);
+  } catch (error$27) {
+    logRecoverableError(request, error$27), fatalError(request, error$27);
   }
 }
 function resolveServerReference(bundlerConfig, id) {
@@ -2238,8 +2373,8 @@ function parseReadableStream(response, reference, type) {
             (previousBlockedChunk = chunk));
       } else {
         chunk = previousBlockedChunk;
-        var chunk$26 = createPendingChunk(response);
-        chunk$26.then(
+        var chunk$30 = createPendingChunk(response);
+        chunk$30.then(
           function (v) {
             return controller.enqueue(v);
           },
@@ -2247,10 +2382,10 @@ function parseReadableStream(response, reference, type) {
             return controller.error(e);
           }
         );
-        previousBlockedChunk = chunk$26;
+        previousBlockedChunk = chunk$30;
         chunk.then(function () {
-          previousBlockedChunk === chunk$26 && (previousBlockedChunk = null);
-          resolveModelChunk(chunk$26, json, -1);
+          previousBlockedChunk === chunk$30 && (previousBlockedChunk = null);
+          resolveModelChunk(chunk$30, json, -1);
         });
       }
     },
@@ -2608,12 +2743,12 @@ exports.decodeReplyFromBusboy = function (busboyStream, turbopackMap, options) {
         "React doesn't accept base64 encoded file uploads because we don't expect form data passed from a browser to ever encode data that way. If that's the wrong assumption, we can easily fix it."
       );
     pendingFiles++;
-    var JSCompiler_object_inline_chunks_216 = [];
+    var JSCompiler_object_inline_chunks_201 = [];
     value.on("data", function (chunk) {
-      JSCompiler_object_inline_chunks_216.push(chunk);
+      JSCompiler_object_inline_chunks_201.push(chunk);
     });
     value.on("end", function () {
-      var blob = new Blob(JSCompiler_object_inline_chunks_216, {
+      var blob = new Blob(JSCompiler_object_inline_chunks_201, {
         type: mimeType
       });
       response._formData.append(name, blob, filename);

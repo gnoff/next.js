@@ -82,6 +82,7 @@ var ReactDOMSharedInternals =
     ReactDOM.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE,
   REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element"),
   REACT_LAZY_TYPE = Symbol.for("react.lazy"),
+  REACT_POSTPONE_TYPE = Symbol.for("react.postpone"),
   MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
 function getIteratorFn(maybeIterable) {
   if (null === maybeIterable || "object" !== typeof maybeIterable) return null;
@@ -1413,6 +1414,17 @@ function processFullRow(response, id, tag, buffer, chunk) {
       (response = response._chunks.get(id)) &&
         "fulfilled" === response.status &&
         response.reason.close("" === row ? '"$undefined"' : row);
+      break;
+    case 80:
+      row = Error(
+        "A Server Component was postponed. The reason is omitted in production builds to avoid leaking sensitive details."
+      );
+      row.$$typeof = REACT_POSTPONE_TYPE;
+      row.stack = "Error: " + row.message;
+      tag = response._chunks;
+      (buffer = tag.get(id))
+        ? triggerErrorOnChunk(buffer, row)
+        : tag.set(id, new Chunk("rejected", null, row, response));
       break;
     default:
       (tag = response._chunks),

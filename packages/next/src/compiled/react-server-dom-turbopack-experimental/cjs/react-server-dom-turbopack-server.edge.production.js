@@ -10,7 +10,21 @@
 
 "use strict";
 var ReactDOM = require("react-dom"),
-  React = require("react"),
+  React = require("react");
+function handleErrorInNextTick(error) {
+  setTimeout(function () {
+    throw error;
+  });
+}
+var LocalPromise = Promise,
+  scheduleMicrotask =
+    "function" === typeof queueMicrotask
+      ? queueMicrotask
+      : function (callback) {
+          LocalPromise.resolve(null)
+            .then(callback)
+            .catch(handleErrorInNextTick);
+        },
   currentView = null,
   writtenBytes = 0;
 function writeChunkAndReturn(destination, chunk) {
@@ -1000,7 +1014,11 @@ function renderFunctionComponent(request, task, key, Component, props) {
   thenableIndexCounter = 0;
   thenableState = prevThenableState;
   Component = Component(props, void 0);
-  if ("object" === typeof Component && null !== Component) {
+  if (
+    "object" === typeof Component &&
+    null !== Component &&
+    Component.$$typeof !== CLIENT_REFERENCE_TAG$1
+  ) {
     if ("function" === typeof Component.then) {
       props = Component;
       if ("fulfilled" === props.status) return props.value;
@@ -1109,9 +1127,9 @@ function pingTask(request, task) {
   pingedTasks.push(task);
   1 === pingedTasks.length &&
     ((request.flushScheduled = null !== request.destination),
-    setTimeout(function () {
+    scheduleMicrotask(function () {
       return performWork(request);
-    }, 0));
+    }));
 }
 function createTask(request, model, keyPath, implicitSlot, abortSet) {
   request.pendingChunks++;
@@ -1856,17 +1874,15 @@ function startWork(request) {
       }, 0);
 }
 function enqueueFlush(request) {
-  if (
-    !1 === request.flushScheduled &&
+  !1 === request.flushScheduled &&
     0 === request.pingedTasks.length &&
-    null !== request.destination
-  ) {
-    var destination = request.destination;
-    request.flushScheduled = !0;
+    null !== request.destination &&
+    ((request.flushScheduled = !0),
     setTimeout(function () {
-      return flushCompletedChunks(request, destination);
-    }, 0);
-  }
+      request.flushScheduled = !1;
+      var destination = request.destination;
+      destination && flushCompletedChunks(request, destination);
+    }, 0));
 }
 function abort(request, reason) {
   try {

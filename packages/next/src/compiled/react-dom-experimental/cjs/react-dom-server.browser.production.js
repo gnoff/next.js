@@ -125,6 +125,16 @@ function murmurhash3_32_gc(key, seed) {
     4294967295;
   return (h1 ^ (h1 >>> 16)) >>> 0;
 }
+var channel = new MessageChannel(),
+  taskQueue = [];
+channel.port1.onmessage = function () {
+  var task = taskQueue.shift();
+  task && task();
+};
+function scheduleWork(callback) {
+  taskQueue.push(callback);
+  channel.port2.postMessage(null);
+}
 var currentView = null,
   writtenBytes = 0;
 function writeChunk(destination, chunk) {
@@ -4035,7 +4045,9 @@ function pingTask(request, task) {
   request.pingedTasks.push(task);
   1 === request.pingedTasks.length &&
     ((request.flushScheduled = null !== request.destination),
-    performWork(request));
+    scheduleWork(function () {
+      return performWork(request);
+    }));
 }
 function createSuspenseBoundary(request, fallbackAbortableTasks) {
   return {
@@ -6246,22 +6258,25 @@ function flushCompletedQueues(request, destination) {
 }
 function startWork(request) {
   request.flushScheduled = null !== request.destination;
-  performWork(request);
+  scheduleWork(function () {
+    return performWork(request);
+  });
   null === request.trackedPostpones &&
-    safelyEmitEarlyPreloads(request, 0 === request.pendingRootTasks);
+    scheduleWork(function () {
+      safelyEmitEarlyPreloads(request, 0 === request.pendingRootTasks);
+    });
 }
 function enqueueFlush(request) {
-  if (
-    !1 === request.flushScheduled &&
+  !1 === request.flushScheduled &&
     0 === request.pingedTasks.length &&
-    null !== request.destination
-  ) {
-    request.flushScheduled = !0;
-    var destination = request.destination;
-    destination
-      ? flushCompletedQueues(request, destination)
-      : (request.flushScheduled = !1);
-  }
+    null !== request.destination &&
+    ((request.flushScheduled = !0),
+    scheduleWork(function () {
+      var destination = request.destination;
+      destination
+        ? flushCompletedQueues(request, destination)
+        : (request.flushScheduled = !1);
+    }));
 }
 function startFlowing(request, destination) {
   if (1 === request.status)
@@ -6343,6 +6358,19 @@ function getPostponedState(request) {
     replaySlots: trackedPostpones.rootSlots
   };
 }
+function ensureCorrectIsomorphicReactVersion() {
+  var isomorphicReactPackageVersion = React.version;
+  if ("19.0.0-experimental-ab5cea49d2-20240603" !== isomorphicReactPackageVersion)
+    throw Error(
+      formatProdErrorMessage(
+        527,
+        isomorphicReactPackageVersion,
+        "19.0.0-experimental-ab5cea49d2-20240603"
+      )
+    );
+}
+ensureCorrectIsomorphicReactVersion();
+ensureCorrectIsomorphicReactVersion();
 exports.prerender = function (children, options) {
   return new Promise(function (resolve, reject) {
     var onHeaders = options ? options.onHeaders : void 0,
@@ -6542,4 +6570,4 @@ exports.resume = function (children, postponedState, options) {
     startWork(request);
   });
 };
-exports.version = "19.0.0-experimental-f994737d14-20240522";
+exports.version = "19.0.0-experimental-ab5cea49d2-20240603";

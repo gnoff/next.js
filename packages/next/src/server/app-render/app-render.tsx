@@ -108,6 +108,7 @@ import {
   usedDynamicAPIs,
   createPostponedAbortSignal,
   formatDynamicAPIAccesses,
+  getPostponedReason,
 } from './dynamic-rendering'
 import {
   getClientComponentLoaderMetrics,
@@ -950,17 +951,36 @@ async function renderToHTMLOrFlightImpl(
         nonce
       )
 
-      // We kick off the Flight Request (render) here. It is ok to initiate the render in an arbitrary
-      // place however it is critical that we only construct the Flight Response inside the SSR
-      // render so that directives like preloads are correctly piped through
-      const serverStream = ComponentMod.renderToReadableStream(
-        <ReactServerApp tree={tree} ctx={ctx} asNotFound={asNotFound} />,
-        clientReferenceManifest.clientModules,
-        {
-          onError: serverComponentsErrorHandler,
-          nonce,
-        }
-      )
+      let serverStream
+      if (isStaticGeneration && process.env.__NEXT_IODYNAMIC) {
+        console.log('__IO DYNAMIC__')
+        const reason = getPostponedReason('prerender complete')
+        const controller = new AbortController()
+        serverStream = ComponentMod.renderToReadableStream(
+          <ReactServerApp tree={tree} ctx={ctx} asNotFound={asNotFound} />,
+          clientReferenceManifest.clientModules,
+          {
+            onError: serverComponentsErrorHandler,
+            nonce,
+            signal: controller.signal,
+          }
+        )
+        await new Promise((r) => setImmediate(r))
+        controller.abort(reason)
+      } else {
+        console.log('__normal path__')
+        // We kick off the Flight Request (render) here. It is ok to initiate the render in an arbitrary
+        // place however it is critical that we only construct the Flight Response inside the SSR
+        // render so that directives like preloads are correctly piped through
+        serverStream = ComponentMod.renderToReadableStream(
+          <ReactServerApp tree={tree} ctx={ctx} asNotFound={asNotFound} />,
+          clientReferenceManifest.clientModules,
+          {
+            onError: serverComponentsErrorHandler,
+            nonce,
+          }
+        )
+      }
 
       // We are going to consume this render both for SSR and for inlining the flight data
       let [renderStream, dataStream] = serverStream.tee()

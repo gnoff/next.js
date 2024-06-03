@@ -64,13 +64,18 @@
       "default": "./profiling.js"
     },
     "./test-utils": "./test-utils.js",
+    "./unstable_testing": {
+      "react-server": "./unstable_testing.react-server.js",
+      "default": "./unstable_testing.js"
+    },
+    "./unstable_server-external-runtime": "./unstable_server-external-runtime.js",
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "scheduler": "0.25.0-rc-f994737d14-20240522"
+    "scheduler": "https://react-builds.vercel.app/api/commits/ab5cea49d2580ee5f43525d8804a3c0e2ddddd42/packages/scheduler"
   },
   "peerDependencies": {
-    "react": "19.0.0-rc-f994737d14-20240522"
+    "react": "https://react-builds.vercel.app/api/commits/ab5cea49d2580ee5f43525d8804a3c0e2ddddd42/packages/react"
   },
   "browser": {
     "./server.js": "./server.browser.js",

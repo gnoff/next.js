@@ -9,7 +9,18 @@
  */
 
 "use strict";
-var ReactSharedInternals = { H: null, A: null };
+var TaintRegistryObjects$1 = new WeakMap(),
+  TaintRegistryValues$1 = new Map(),
+  TaintRegistryByteLengths$1 = new Set(),
+  TaintRegistryPendingRequests$1 = new Set(),
+  ReactSharedInternals = {
+    H: null,
+    A: null,
+    TaintRegistryObjects: TaintRegistryObjects$1,
+    TaintRegistryValues: TaintRegistryValues$1,
+    TaintRegistryByteLengths: TaintRegistryByteLengths$1,
+    TaintRegistryPendingRequests: TaintRegistryPendingRequests$1
+  };
 function formatProdErrorMessage(code) {
   var url = "https://react.dev/errors/" + code;
   if (1 < arguments.length) {
@@ -35,6 +46,8 @@ var isArrayImpl = Array.isArray,
   REACT_SUSPENSE_TYPE = Symbol.for("react.suspense"),
   REACT_MEMO_TYPE = Symbol.for("react.memo"),
   REACT_LAZY_TYPE = Symbol.for("react.lazy"),
+  REACT_DEBUG_TRACING_MODE_TYPE = Symbol.for("react.debug_trace_mode"),
+  REACT_POSTPONE_TYPE = Symbol.for("react.postpone"),
   MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
 function getIteratorFn(maybeIterable) {
   if (null === maybeIterable || "object" !== typeof maybeIterable) return null;
@@ -170,7 +183,8 @@ function mapIntoArray(children, array, escapedPrefix, nameSoFar, callback) {
             (callback = cloneAndReplaceKey(
               callback,
               escapedPrefix +
-                (!callback.key || (children && children.key === callback.key)
+                (null == callback.key ||
+                (children && children.key === callback.key)
                   ? ""
                   : ("" + callback.key).replace(
                       userProvidedKeyEscapeRegex,
@@ -294,6 +308,26 @@ var reportGlobalError =
         console.error(error);
       };
 function noop() {}
+var getPrototypeOf = Object.getPrototypeOf,
+  TaintRegistryObjects = ReactSharedInternals.TaintRegistryObjects,
+  TaintRegistryValues = ReactSharedInternals.TaintRegistryValues,
+  TaintRegistryByteLengths = ReactSharedInternals.TaintRegistryByteLengths,
+  TaintRegistryPendingRequests =
+    ReactSharedInternals.TaintRegistryPendingRequests,
+  TypedArrayConstructor = getPrototypeOf(Uint32Array.prototype).constructor;
+function cleanup(entryValue) {
+  var entry = TaintRegistryValues.get(entryValue);
+  void 0 !== entry &&
+    (TaintRegistryPendingRequests.forEach(function (requestQueue) {
+      requestQueue.push(entryValue);
+      entry.count++;
+    }),
+    1 === entry.count ? TaintRegistryValues.delete(entryValue) : entry.count--);
+}
+var finalizationRegistry =
+  "function" === typeof FinalizationRegistry
+    ? new FinalizationRegistry(cleanup)
+    : null;
 exports.Children = {
   map: mapChildren,
   forEach: function (children, forEachFunc, forEachContext) {
@@ -422,6 +456,50 @@ exports.createElement = function (type, config, children) {
 exports.createRef = function () {
   return { current: null };
 };
+exports.experimental_taintObjectReference = function (message, object) {
+  message =
+    "" +
+    (message ||
+      "A tainted value was attempted to be serialized to a Client Component or Action closure. This would leak it to the client.");
+  if ("string" === typeof object || "bigint" === typeof object)
+    throw Error(formatProdErrorMessage(496));
+  if (
+    null === object ||
+    ("object" !== typeof object && "function" !== typeof object)
+  )
+    throw Error(formatProdErrorMessage(497));
+  TaintRegistryObjects.set(object, message);
+};
+exports.experimental_taintUniqueValue = function (message, lifetime, value) {
+  message =
+    "" +
+    (message ||
+      "A tainted value was attempted to be serialized to a Client Component or Action closure. This would leak it to the client.");
+  if (
+    null === lifetime ||
+    ("object" !== typeof lifetime && "function" !== typeof lifetime)
+  )
+    throw Error(formatProdErrorMessage(493));
+  if ("string" !== typeof value && "bigint" !== typeof value)
+    if (value instanceof TypedArrayConstructor || value instanceof DataView)
+      TaintRegistryByteLengths.add(value.byteLength),
+        (value = String.fromCharCode.apply(
+          String,
+          new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+        ));
+    else {
+      message = null === value ? "null" : typeof value;
+      if ("object" === message || "function" === message)
+        throw Error(formatProdErrorMessage(494));
+      throw Error(formatProdErrorMessage(495, message));
+    }
+  var existingEntry = TaintRegistryValues.get(value);
+  void 0 === existingEntry
+    ? TaintRegistryValues.set(value, { message: message, count: 1 })
+    : existingEntry.count++;
+  null !== finalizationRegistry &&
+    finalizationRegistry.register(lifetime, value);
+};
 exports.forwardRef = function (render) {
   return { $$typeof: REACT_FORWARD_REF_TYPE, render: render };
 };
@@ -442,23 +520,33 @@ exports.memo = function (type, compare) {
 };
 exports.startTransition = function (scope) {
   var prevTransition = ReactSharedInternals.T,
-    callbacks = new Set();
-  ReactSharedInternals.T = { _callbacks: callbacks };
-  var currentTransition = ReactSharedInternals.T;
+    transition = {};
+  ReactSharedInternals.T = transition;
   try {
-    var returnValue = scope();
+    var returnValue = scope(),
+      onStartTransitionFinish = ReactSharedInternals.S;
+    null !== onStartTransitionFinish &&
+      onStartTransitionFinish(transition, returnValue);
     "object" === typeof returnValue &&
       null !== returnValue &&
       "function" === typeof returnValue.then &&
-      (callbacks.forEach(function (callback) {
-        return callback(currentTransition, returnValue);
-      }),
-      returnValue.then(noop, reportGlobalError));
+      returnValue.then(noop, reportGlobalError);
   } catch (error) {
     reportGlobalError(error);
   } finally {
     ReactSharedInternals.T = prevTransition;
   }
+};
+exports.unstable_DebugTracingMode = REACT_DEBUG_TRACING_MODE_TYPE;
+exports.unstable_SuspenseList = REACT_SUSPENSE_TYPE;
+exports.unstable_getCacheForType = function (resourceType) {
+  var dispatcher = ReactSharedInternals.A;
+  return dispatcher ? dispatcher.getCacheForType(resourceType) : resourceType();
+};
+exports.unstable_postpone = function (reason) {
+  reason = Error(reason);
+  reason.$$typeof = REACT_POSTPONE_TYPE;
+  throw reason;
 };
 exports.use = function (usable) {
   return ReactSharedInternals.H.use(usable);
@@ -476,4 +564,4 @@ exports.useId = function () {
 exports.useMemo = function (create, deps) {
   return ReactSharedInternals.H.useMemo(create, deps);
 };
-exports.version = "19.0.0-rc-f994737d14-20240522";
+exports.version = "19.0.0-experimental-ab5cea49d2-20240603";

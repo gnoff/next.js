@@ -46,8 +46,8 @@
     "neo-async": "^2.6.1"
   },
   "peerDependencies": {
-    "react": "0.0.0-experimental-f994737d14-20240522",
-    "react-dom": "0.0.0-experimental-f994737d14-20240522",
+    "react": "https://react-builds.vercel.app/api/commits/ab5cea49d2580ee5f43525d8804a3c0e2ddddd42/packages/react",
+    "react-dom": "https://react-builds.vercel.app/api/commits/ab5cea49d2580ee5f43525d8804a3c0e2ddddd42/packages/react-dom",
     "webpack": "^5.59.0"
   }
 }

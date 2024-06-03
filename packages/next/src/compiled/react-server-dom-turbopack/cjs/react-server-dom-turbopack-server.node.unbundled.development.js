@@ -42,6 +42,9 @@ if (!ReactSharedInternalsServer) {
   throw new Error('The "react" package in this environment is not configured correctly. ' + 'The "react-server" condition must be enabled in any environment that ' + 'runs React Server Components.');
 }
 
+// -----------------------------------------------------------------------------
+var enablePostpone = true;
+
 function error(format) {
   {
     {
@@ -52,38 +55,54 @@ function error(format) {
       printWarning('error', format, args);
     }
   }
-}
+} // eslint-disable-next-line react-internal/no-production-logging
+
+var supportsCreateTask = !!console.createTask;
 
 function printWarning(level, format, args) {
   // When changing this logic, you might want to also
   // update consoleWithStackDev.www.js as well.
   {
-    var stack = ReactSharedInternalsServer.getStackAddendum();
+    var isErrorLogger = format === '%s\n\n%s\n' || format === '%o\n\n%s\n\n%s\n';
 
-    if (stack !== '') {
-      format += '%s';
-      args = args.concat([stack]);
-    } // eslint-disable-next-line react-internal/safe-string-coercion
+    if (!supportsCreateTask && ReactSharedInternalsServer.getCurrentStack) {
+      // We only add the current stack to the console when createTask is not supported.
+      // Since createTask requires DevTools to be open to work, this means that stacks
+      // can be lost while DevTools isn't open but we can't detect this.
+      var stack = ReactSharedInternalsServer.getCurrentStack();
 
+      if (stack !== '') {
+        format += '%s';
+        args = args.concat([stack]);
+      }
+    }
 
-    var argsWithFormat = args.map(function (item) {
-      return String(item);
-    }); // Careful: RN currently depends on this prefix
-
-    argsWithFormat.unshift('Warning: ' + format); // We intentionally don't use spread (or .apply) directly because it
+    if (isErrorLogger) {
+      // Don't prefix our default logging formatting in ReactFiberErrorLoggger.
+      // Don't toString the arguments.
+      args.unshift(format);
+    } else {
+      // TODO: Remove this prefix and stop toStringing in the wrapper and
+      // instead do it at each callsite as needed.
+      // Careful: RN currently depends on this prefix
+      // eslint-disable-next-line react-internal/safe-string-coercion
+      args = args.map(function (item) {
+        return String(item);
+      });
+      args.unshift('Warning: ' + format);
+    } // We intentionally don't use spread (or .apply) directly because it
     // breaks IE9: https://github.com/facebook/react/issues/13610
     // eslint-disable-next-line react-internal/no-production-logging
 
-    Function.prototype.apply.call(console[level], console, argsWithFormat);
+
+    Function.prototype.apply.call(console[level], console, args);
   }
 }
-
-// -----------------------------------------------------------------------------
-var enablePostpone = false;
 
 function scheduleWork(callback) {
   setImmediate(callback);
 }
+var scheduleMicrotask = queueMicrotask;
 function flushBuffered(destination) {
   // If we don't have any more data to send right now.
   // Flush whatever is in the buffer to the wire.
@@ -829,6 +848,26 @@ function createHints() {
   return new Set();
 }
 
+// We do this globally since the async work can potentially eagerly
+// start before the first request and once requests start they can interleave.
+// In theory we could enable and disable using a ref count of active requests
+// but given that typically this is just a live server, it doesn't really matter.
+
+function initAsyncDebugInfo() {
+  {
+    async_hooks.createHook({
+      init: function (asyncId, type, triggerAsyncId) {// TODO
+      },
+      promiseResolve: function (asyncId) {
+        // TODO
+        async_hooks.executionAsyncId();
+      },
+      destroy: function (asyncId) {// TODO
+      }
+    }).enable();
+  }
+}
+
 var supportsRequestStorage = true;
 var requestStorage = new async_hooks.AsyncLocalStorage();
 var supportsComponentStorage = true;
@@ -1566,7 +1605,177 @@ function describeObjectForErrorMessage(objectOrArray, expandedName) {
   return '\n  ' + str;
 }
 
+// Turns a TypedArray or ArrayBuffer into a string that can be used for comparison
+// in a Map to see if the bytes are the same.
+function binaryToComparableString(view) {
+  return String.fromCharCode.apply(String, new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+}
+
 var ReactSharedInternals = ReactSharedInternalsServer;
+
+var externalRegExp = /\/node\_modules\/| \(node\:| node\:|\(\<anonymous\>\)/;
+var callComponentFrame = null;
+var callIteratorFrame = null;
+var callLazyInitFrame = null;
+
+function isNotExternal(stackFrame) {
+  return !externalRegExp.test(stackFrame);
+}
+
+function initCallComponentFrame() {
+  // Extract the stack frame of the callComponentInDEV function.
+  var error = callComponentInDEV(Error, 'react-stack-top-frame', {});
+  var stack = error.stack;
+  var startIdx = stack.startsWith('Error: react-stack-top-frame\n') ? 29 : 0;
+  var endIdx = stack.indexOf('\n', startIdx);
+
+  if (endIdx === -1) {
+    return stack.slice(startIdx);
+  }
+
+  return stack.slice(startIdx, endIdx);
+}
+
+function initCallIteratorFrame() {
+  // Extract the stack frame of the callIteratorInDEV function.
+  try {
+    callIteratorInDEV({
+      next: null
+    });
+    return '';
+  } catch (error) {
+    var stack = error.stack;
+    var startIdx = stack.startsWith('TypeError: ') ? stack.indexOf('\n') + 1 : 0;
+    var endIdx = stack.indexOf('\n', startIdx);
+
+    if (endIdx === -1) {
+      return stack.slice(startIdx);
+    }
+
+    return stack.slice(startIdx, endIdx);
+  }
+}
+
+function initCallLazyInitFrame() {
+  // Extract the stack frame of the callLazyInitInDEV function.
+  var error = callLazyInitInDEV({
+    $$typeof: REACT_LAZY_TYPE,
+    _init: Error,
+    _payload: 'react-stack-top-frame'
+  });
+  var stack = error.stack;
+  var startIdx = stack.startsWith('Error: react-stack-top-frame\n') ? 29 : 0;
+  var endIdx = stack.indexOf('\n', startIdx);
+
+  if (endIdx === -1) {
+    return stack.slice(startIdx);
+  }
+
+  return stack.slice(startIdx, endIdx);
+}
+
+function filterDebugStack(error) {
+  // Since stacks can be quite large and we pass a lot of them, we filter them out eagerly
+  // to save bandwidth even in DEV. We'll also replay these stacks on the client so by
+  // stripping them early we avoid that overhead. Otherwise we'd normally just rely on
+  // the DevTools or framework's ignore lists to filter them out.
+  var stack = error.stack;
+
+  if (stack.startsWith('Error: react-stack-top-frame\n')) {
+    // V8's default formatting prefixes with the error message which we
+    // don't want/need.
+    stack = stack.slice(29);
+  }
+
+  var frames = stack.split('\n').slice(1);
+
+  if (callComponentFrame === null) {
+    callComponentFrame = initCallComponentFrame();
+  }
+
+  var lastFrameIdx = frames.indexOf(callComponentFrame);
+
+  if (lastFrameIdx === -1) {
+    if (callLazyInitFrame === null) {
+      callLazyInitFrame = initCallLazyInitFrame();
+    }
+
+    lastFrameIdx = frames.indexOf(callLazyInitFrame);
+
+    if (lastFrameIdx === -1) {
+      if (callIteratorFrame === null) {
+        callIteratorFrame = initCallIteratorFrame();
+      }
+
+      lastFrameIdx = frames.indexOf(callIteratorFrame);
+    }
+  }
+
+  if (lastFrameIdx !== -1) {
+    // Cut off everything after our "callComponent" slot since it'll be Flight internals.
+    frames.length = lastFrameIdx;
+  }
+
+  return frames.filter(isNotExternal).join('\n');
+}
+
+initAsyncDebugInfo();
+
+function patchConsole(consoleInst, methodName) {
+  var descriptor = Object.getOwnPropertyDescriptor(consoleInst, methodName);
+
+  if (descriptor && (descriptor.configurable || descriptor.writable) && typeof descriptor.value === 'function') {
+    var originalMethod = descriptor.value;
+    var originalName = Object.getOwnPropertyDescriptor( // $FlowFixMe[incompatible-call]: We should be able to get descriptors from any function.
+    originalMethod, 'name');
+
+    var wrapperMethod = function () {
+      var request = resolveRequest();
+
+      if (methodName === 'assert' && arguments[0]) ; else if (request !== null) {
+        // Extract the stack. Not all console logs print the full stack but they have at
+        // least the line it was called from. We could optimize transfer by keeping just
+        // one stack frame but keeping it simple for now and include all frames.
+        var stack = filterDebugStack(new Error('react-stack-top-frame'));
+        request.pendingChunks++; // We don't currently use this id for anything but we emit it so that we can later
+        // refer to previous logs in debug info to associate them with a component.
+
+        var id = request.nextChunkId++;
+        var owner = resolveOwner();
+        emitConsoleChunk(request, id, methodName, owner, stack, arguments);
+      } // $FlowFixMe[prop-missing]
+
+
+      return originalMethod.apply(this, arguments);
+    };
+
+    if (originalName) {
+      Object.defineProperty(wrapperMethod, // $FlowFixMe[cannot-write] yes it is
+      'name', originalName);
+    }
+
+    Object.defineProperty(consoleInst, methodName, {
+      value: wrapperMethod
+    });
+  }
+}
+
+if (typeof console === 'object' && console !== null) {
+  // Instrument console to capture logs for replaying on the client.
+  patchConsole(console, 'assert');
+  patchConsole(console, 'debug');
+  patchConsole(console, 'dir');
+  patchConsole(console, 'dirxml');
+  patchConsole(console, 'error');
+  patchConsole(console, 'group');
+  patchConsole(console, 'groupCollapsed');
+  patchConsole(console, 'groupEnd');
+  patchConsole(console, 'info');
+  patchConsole(console, 'log');
+  patchConsole(console, 'table');
+  patchConsole(console, 'trace');
+  patchConsole(console, 'warn');
+}
 
 var ObjectPrototype = Object.prototype;
 var stringify = JSON.stringify; // Serializable values
@@ -1577,6 +1786,35 @@ var PENDING$1 = 0;
 var COMPLETED = 1;
 var ABORTED = 3;
 var ERRORED$1 = 4;
+var TaintRegistryObjects = ReactSharedInternals.TaintRegistryObjects,
+    TaintRegistryValues = ReactSharedInternals.TaintRegistryValues,
+    TaintRegistryByteLengths = ReactSharedInternals.TaintRegistryByteLengths,
+    TaintRegistryPendingRequests = ReactSharedInternals.TaintRegistryPendingRequests;
+
+function throwTaintViolation(message) {
+  // eslint-disable-next-line react-internal/prod-error-codes
+  throw new Error(message);
+}
+
+function cleanupTaintQueue(request) {
+  var cleanupQueue = request.taintCleanupQueue;
+  TaintRegistryPendingRequests.delete(cleanupQueue);
+
+  for (var i = 0; i < cleanupQueue.length; i++) {
+    var entryValue = cleanupQueue[i];
+    var entry = TaintRegistryValues.get(entryValue);
+
+    if (entry !== undefined) {
+      if (entry.count === 1) {
+        TaintRegistryValues.delete(entryValue);
+      } else {
+        entry.count--;
+      }
+    }
+  }
+
+  cleanupQueue.length = 0;
+}
 
 function defaultErrorHandler(error) {
   console['error'](error); // Don't transform to our wrapper
@@ -1597,6 +1835,10 @@ function createRequest(model, bundlerConfig, onError, identifierPrefix, onPostpo
   var abortSet = new Set();
   var pingedTasks = [];
   var cleanupQueue = [];
+
+  {
+    TaintRegistryPendingRequests.add(cleanupQueue);
+  }
 
   var hints = createHints();
   var request = {
@@ -1630,6 +1872,7 @@ function createRequest(model, bundlerConfig, onError, identifierPrefix, onPostpo
 
   {
     request.environmentName = environmentName === undefined ? 'Server' : environmentName;
+    request.didWarnForKey = null;
   }
 
   var rootTask = createTask(request, model, null, false, abortSet);
@@ -1674,7 +1917,11 @@ function serializeThenable(request, task, thenable) {
       {
         var x = thenable.reason;
 
-        {
+        if (typeof x === 'object' && x !== null && x.$$typeof === REACT_POSTPONE_TYPE) {
+          var postponeInstance = x;
+          logPostpone(request, postponeInstance.message);
+          emitPostponeChunk(request, newTask.id, postponeInstance);
+        } else {
           var digest = logRecoverableError(request, x);
           emitErrorChunk(request, newTask.id, digest, x);
         }
@@ -1714,7 +1961,11 @@ function serializeThenable(request, task, thenable) {
     newTask.model = value;
     pingTask(request, newTask);
   }, function (reason) {
-    {
+    if (typeof reason === 'object' && reason !== null && reason.$$typeof === REACT_POSTPONE_TYPE) {
+      var _postponeInstance = reason;
+      logPostpone(request, _postponeInstance.message);
+      emitPostponeChunk(request, newTask.id, _postponeInstance);
+    } else {
       newTask.status = ERRORED$1;
 
       var _digest = logRecoverableError(request, reason);
@@ -1792,7 +2043,11 @@ function serializeReadableStream(request, task, stream) {
     aborted = true;
     request.abortListeners.delete(error);
 
-    {
+    if (typeof reason === 'object' && reason !== null && reason.$$typeof === REACT_POSTPONE_TYPE) {
+      var postponeInstance = reason;
+      logPostpone(request, postponeInstance.message);
+      emitPostponeChunk(request, streamTask.id, postponeInstance);
+    } else {
       var digest = logRecoverableError(request, reason);
       emitErrorChunk(request, streamTask.id, digest, reason);
     }
@@ -1891,7 +2146,11 @@ function serializeAsyncIterable(request, task, iterable, iterator) {
     aborted = true;
     request.abortListeners.delete(error);
 
-    {
+    if (typeof reason === 'object' && reason !== null && reason.$$typeof === REACT_POSTPONE_TYPE) {
+      var postponeInstance = reason;
+      logPostpone(request, postponeInstance.message);
+      emitPostponeChunk(request, streamTask.id, postponeInstance);
+    } else {
       var digest = logRecoverableError(request, reason);
       emitErrorChunk(request, streamTask.id, digest, reason);
     }
@@ -2015,7 +2274,8 @@ function callLazyInitInDEV(lazy) {
 }
 
 function renderFunctionComponent(request, task, key, Component, props, owner, // DEV-only
-stack) // DEV-only
+stack, // DEV-only
+validated) // DEV-only
 {
   // Reset the task's thenable state before continuing, so that if a later
   // component suspends we can reuse the same task object. If the same
@@ -2045,23 +2305,42 @@ stack) // DEV-only
         env: request.environmentName,
         owner: owner
       };
+
+      {
+        componentDebugInfo.stack = stack;
+      } // We outline this model eagerly so that we can refer to by reference as an owner.
       // If we had a smarter way to dedupe we might not have to do this if there ends up
       // being no references to this as an owner.
 
 
       outlineModel(request, componentDebugInfo);
       emitDebugChunk(request, componentDebugID, componentDebugInfo);
+
+      {
+        warnForMissingKey(request, key, validated, componentDebugInfo);
+      }
     }
 
     prepareToUseHooksForComponent(prevThenableState, componentDebugInfo);
     result = callComponentInDEV(Component, props, componentDebugInfo);
   }
 
-  if (typeof result === 'object' && result !== null) {
+  if (typeof result === 'object' && result !== null && !isClientReference(result)) {
     if (typeof result.then === 'function') {
       // When the return value is in children position we can resolve it immediately,
       // to its value without a wrapper if it's synchronously available.
       var thenable = result;
+
+      {
+        // If the thenable resolves to an element, then it was in a static position,
+        // the return value of a Server Component. That doesn't need further validation
+        // of keys. The Server Component itself would have had a key.
+        thenable.then(function (resolvedValue) {
+          if (typeof resolvedValue === 'object' && resolvedValue !== null && resolvedValue.$$typeof === REACT_ELEMENT_TYPE) {
+            resolvedValue._store.validated = 1;
+          }
+        }, function () {});
+      }
 
       if (thenable.status === 'fulfilled') {
         return thenable.value;
@@ -2133,6 +2412,11 @@ stack) // DEV-only
       {
         result._debugInfo = _iterableChild._debugInfo;
       }
+    } else if (result.$$typeof === REACT_ELEMENT_TYPE) {
+      // If the server component renders to an element, then it was in a static position.
+      // That doesn't need further validation of keys. The Server Component itself would
+      // have had a key.
+      result._store.validated = 1;
     }
   } // Track this element's key on the Server Component on the keyPath context..
 
@@ -2158,7 +2442,52 @@ stack) // DEV-only
   return json;
 }
 
+function warnForMissingKey(request, key, validated, componentDebugInfo) {
+  {
+    if (validated !== 2) {
+      return;
+    }
+
+    var didWarnForKey = request.didWarnForKey;
+
+    if (didWarnForKey == null) {
+      didWarnForKey = request.didWarnForKey = new WeakSet();
+    }
+
+    var parentOwner = componentDebugInfo.owner;
+
+    if (parentOwner != null) {
+      if (didWarnForKey.has(parentOwner)) {
+        // We already warned for other children in this parent.
+        return;
+      }
+
+      didWarnForKey.add(parentOwner);
+    } // Call with the server component as the currently rendering component
+    // for context.
+
+
+    callComponentInDEV(function () {
+      error('Each child in a list should have a unique "key" prop.' + '%s%s See https://react.dev/link/warning-keys for more information.', '', '');
+    }, null, componentDebugInfo);
+  }
+}
+
 function renderFragment(request, task, children) {
+  {
+    for (var i = 0; i < children.length; i++) {
+      var child = children[i];
+
+      if (child !== null && typeof child === 'object' && child.$$typeof === REACT_ELEMENT_TYPE) {
+        var element = child;
+
+        if (element.key === null && !element._store.validated) {
+          element._store.validated = 2;
+        }
+      }
+    }
+  }
+
   if (task.keyPath !== null) {
     // We have a Server Component that specifies a key but we're now splitting
     // the tree using a fragment.
@@ -2252,7 +2581,8 @@ function renderAsyncFragment(request, task, children, getAsyncIterator) {
 }
 
 function renderClientElement(task, type, key, props, owner, // DEV-only
-stack) // DEV-only
+stack, // DEV-only
+validated) // DEV-only
 {
   // We prepend the terminal client element that actually gets serialized with
   // the keys of any Server Components which are not serialized.
@@ -2264,7 +2594,7 @@ stack) // DEV-only
     key = keyPath + ',' + key;
   }
 
-  var element = [REACT_ELEMENT_TYPE, type, key, props, owner] ;
+  var element = [REACT_ELEMENT_TYPE, type, key, props, owner, stack, validated]  ;
 
   if (task.implicitSlot && key !== null) {
     // The root Server Component had no key so it was in an implicit slot.
@@ -2303,7 +2633,8 @@ function outlineTask(request, task) {
 }
 
 function renderElement(request, task, type, key, ref, props, owner, // DEV only
-stack) // DEV only
+stack, // DEV only
+validated) // DEV only
 {
   if (ref !== null && ref !== undefined) {
     // When the ref moves to the regular props object this will implicitly
@@ -2325,14 +2656,14 @@ stack) // DEV only
   if (typeof type === 'function') {
     if (isClientReference(type) || isOpaqueTemporaryReference(type)) {
       // This is a reference to a Client Component.
-      return renderClientElement(task, type, key, props, owner);
+      return renderClientElement(task, type, key, props, owner, stack, validated);
     } // This is a Server Component.
 
 
-    return renderFunctionComponent(request, task, key, type, props, owner);
+    return renderFunctionComponent(request, task, key, type, props, owner, stack, validated);
   } else if (typeof type === 'string') {
     // This is a host element. E.g. HTML.
-    return renderClientElement(task, type, key, props, owner);
+    return renderClientElement(task, type, key, props, owner, stack, validated);
   } else if (typeof type === 'symbol') {
     if (type === REACT_FRAGMENT_TYPE && key === null) {
       // For key-less fragments, we add a small optimization to avoid serializing
@@ -2350,11 +2681,11 @@ stack) // DEV only
     // Any built-in works as long as its props are serializable.
 
 
-    return renderClientElement(task, type, key, props, owner);
+    return renderClientElement(task, type, key, props, owner, stack, validated);
   } else if (type != null && typeof type === 'object') {
     if (isClientReference(type)) {
       // This is a reference to a Client Component.
-      return renderClientElement(task, type, key, props, owner);
+      return renderClientElement(task, type, key, props, owner, stack, validated);
     }
 
     switch (type.$$typeof) {
@@ -2366,17 +2697,17 @@ stack) // DEV only
             wrappedType = callLazyInitInDEV(type);
           }
 
-          return renderElement(request, task, wrappedType, key, ref, props, owner);
+          return renderElement(request, task, wrappedType, key, ref, props, owner, stack, validated);
         }
 
       case REACT_FORWARD_REF_TYPE:
         {
-          return renderFunctionComponent(request, task, key, type.render, props, owner);
+          return renderFunctionComponent(request, task, key, type.render, props, owner, stack, validated);
         }
 
       case REACT_MEMO_TYPE:
         {
-          return renderElement(request, task, type.type, key, ref, props, owner);
+          return renderElement(request, task, type.type, key, ref, props, owner, stack, validated);
         }
     }
   }
@@ -2390,7 +2721,7 @@ function pingTask(request, task) {
 
   if (pingedTasks.length === 1) {
     request.flushScheduled = request.destination !== null;
-    scheduleWork(function () {
+    scheduleMicrotask(function () {
       return performWork(request);
     });
   }
@@ -2717,6 +3048,24 @@ function renderModel(request, task, parent, key, value) {
         }
 
         return serializeByValueID(newTask.id);
+      } else if (x.$$typeof === REACT_POSTPONE_TYPE) {
+        // Something postponed. We'll still send everything we have up until this point.
+        // We'll replace this element with a lazy reference that postpones on the client.
+        var postponeInstance = x;
+        request.pendingChunks++;
+        var postponeId = request.nextChunkId++;
+        logPostpone(request, postponeInstance.message);
+        emitPostponeChunk(request, postponeId, postponeInstance); // Restore the context. We assume that this will be restored by the inner
+        // functions in case nothing throws so we don't use "finally" here.
+
+        task.keyPath = prevKeyPath;
+        task.implicitSlot = prevImplicitSlot;
+
+        if (wasReactNode) {
+          return serializeLazyID(postponeId);
+        }
+
+        return serializeByValueID(postponeId);
       }
     } // Restore the context. We assume that this will be restored by the inner
     // functions in case nothing throws so we don't use "finally" here.
@@ -2822,7 +3171,7 @@ function renderModelDestructive(request, task, parent, parentPropertyName, value
 
 
           return renderElement(request, task, element.type, // $FlowFixMe[incompatible-call] the key of an element is null | string
-          element.key, ref, props, element._owner );
+          element.key, ref, props, element._owner , !element._debugStack || typeof element._debugStack === 'string' ? element._debugStack : filterDebugStack(element._debugStack) , element._store.validated );
         }
 
       case REACT_LAZY_TYPE:
@@ -2873,6 +3222,14 @@ function renderModelDestructive(request, task, parent, parentPropertyName, value
 
       if (tempRef !== undefined) {
         return serializeTemporaryReference(request, tempRef);
+      }
+    }
+
+    {
+      var tainted = TaintRegistryObjects.get(value);
+
+      if (tainted !== undefined) {
+        throwTaintViolation(tainted);
       }
     }
 
@@ -3090,6 +3447,13 @@ function renderModelDestructive(request, task, parent, parentPropertyName, value
   }
 
   if (typeof value === 'string') {
+    {
+      var _tainted = TaintRegistryValues.get(value);
+
+      if (_tainted !== undefined) {
+        throwTaintViolation(_tainted.message);
+      }
+    } // TODO: Maybe too clever. If we support URL there's no similar trick.
 
 
     if (value[value.length - 1] === 'Z') {
@@ -3141,6 +3505,14 @@ function renderModelDestructive(request, task, parent, parentPropertyName, value
       }
     }
 
+    {
+      var _tainted2 = TaintRegistryObjects.get(value);
+
+      if (_tainted2 !== undefined) {
+        throwTaintViolation(_tainted2);
+      }
+    }
+
     if (isOpaqueTemporaryReference(value)) {
       throw new Error('Could not reference an opaque temporary reference. ' + 'This is likely due to misconfiguring the temporaryReferences options ' + 'on the server.');
     } else if (/^on[A-Z]/.test(parentPropertyName)) {
@@ -3177,6 +3549,13 @@ function renderModelDestructive(request, task, parent, parentPropertyName, value
   }
 
   if (typeof value === 'bigint') {
+    {
+      var _tainted3 = TaintRegistryValues.get(value);
+
+      if (_tainted3 !== undefined) {
+        throwTaintViolation(_tainted3.message);
+      }
+    }
 
     return serializeBigInt(value);
   }
@@ -3225,6 +3604,9 @@ function logRecoverableError(request, error) {
 }
 
 function fatalError(request, error) {
+  {
+    cleanupTaintQueue(request);
+  } // This is called outside error handling code such as if an error happens in React internals.
 
 
   if (request.destination !== null) {
@@ -3343,6 +3725,17 @@ function emitDebugChunk(request, id, debugInfo) {
 }
 
 function emitTypedArrayChunk(request, id, tag, typedArray) {
+  {
+    if (TaintRegistryByteLengths.has(typedArray.byteLength)) {
+      // If we have had any tainted values of this length, we check
+      // to see if these bytes matches any entries in the registry.
+      var tainted = TaintRegistryValues.get(binaryToComparableString(typedArray));
+
+      if (tainted !== undefined) {
+        throwTaintViolation(tainted.message);
+      }
+    }
+  }
 
   request.pendingChunks++; // Extra chunk for the header.
   // TODO: Convert to little endian if that's not the server default.
@@ -3427,7 +3820,11 @@ function renderConsoleValue(request, counter, parent, parentPropertyName, value)
             request.pendingChunks++;
             var errorId = request.nextChunkId++;
 
-            {
+            if (typeof x === 'object' && x !== null && x.$$typeof === REACT_POSTPONE_TYPE) {
+              var postponeInstance = x; // We don't log this postpone.
+
+              emitPostponeChunk(request, errorId, postponeInstance);
+            } else {
               // We don't log these errors since they didn't actually throw into Flight.
               var digest = '';
               emitErrorChunk(request, errorId, digest, x);
@@ -3638,6 +4035,32 @@ function outlineConsoleValue(request, counter, model) {
   return id;
 }
 
+function emitConsoleChunk(request, id, methodName, owner, stackTrace, args) {
+
+  var counter = {
+    objectCount: 0
+  };
+
+  function replacer(parentPropertyName, value) {
+    try {
+      return renderConsoleValue(request, counter, this, parentPropertyName, value);
+    } catch (x) {
+      return 'unknown value';
+    }
+  } // TODO: Don't double badge if this log came from another Flight Client.
+
+
+  var env = request.environmentName;
+  var payload = [methodName, stackTrace, owner, env]; // $FlowFixMe[method-unbinding]
+
+  payload.push.apply(payload, args); // $FlowFixMe[incompatible-type] stringify can return null
+
+  var json = stringify(payload, replacer);
+  var row = serializeRowHeader('W', id) + json + '\n';
+  var processedChunk = stringToChunk(row);
+  request.completedRegularChunks.push(processedChunk);
+}
+
 function forwardDebugInfo(request, id, debugInfo) {
   for (var i = 0; i < debugInfo.length; i++) {
     request.pendingChunks++;
@@ -3650,6 +4073,13 @@ function emitChunk(request, task, value) {
   // we can emit them directly for this row instead of through an indirection.
 
   if (typeof value === 'string') {
+    {
+      var tainted = TaintRegistryValues.get(value);
+
+      if (tainted !== undefined) {
+        throwTaintViolation(tainted.message);
+      }
+    }
 
     emitTextChunk(request, id, value);
     return;
@@ -3810,6 +4240,13 @@ function retryTask(request, task) {
         x.then(ping, ping);
         task.thenableState = getThenableStateAfterSuspending();
         return;
+      } else if (x.$$typeof === REACT_POSTPONE_TYPE) {
+        request.abortableTasks.delete(task);
+        task.status = ERRORED$1;
+        var postponeInstance = x;
+        logPostpone(request, postponeInstance.message);
+        emitPostponeChunk(request, task.id, postponeInstance);
+        return;
       }
     }
 
@@ -3967,6 +4404,10 @@ function flushCompletedChunks(request, destination) {
   flushBuffered(destination);
 
   if (request.pendingChunks === 0) {
+    // We're done.
+    {
+      cleanupTaintQueue(request);
+    }
 
     close$1(destination);
     request.destination = null;
@@ -3988,10 +4429,14 @@ function enqueueFlush(request) {
   request.pingedTasks.length === 0 && // If there is no destination there is nothing we can flush to. A flush will
   // happen when we start flowing again
   request.destination !== null) {
-    var destination = request.destination;
     request.flushScheduled = true;
     scheduleWork(function () {
-      return flushCompletedChunks(request, destination);
+      request.flushScheduled = false;
+      var destination = request.destination;
+
+      if (destination) {
+        flushCompletedChunks(request, destination);
+      }
     });
   }
 }
@@ -4034,7 +4479,11 @@ function abort(request, reason) {
       request.pendingChunks++;
       var errorId = request.nextChunkId++;
 
-      var postponeInstance; if (enablePostpone && typeof reason === 'object' && reason !== null && reason.$$typeof === REACT_POSTPONE_TYPE) ; else {
+      if (enablePostpone && typeof reason === 'object' && reason !== null && reason.$$typeof === REACT_POSTPONE_TYPE) {
+        var postponeInstance = reason;
+        logPostpone(request, postponeInstance.message);
+        emitPostponeChunk(request, errorId, postponeInstance);
+      } else {
         var error = reason === undefined ? new Error('The render was aborted by the server without a reason.') : reason;
         var digest = logRecoverableError(request, error);
         emitErrorChunk(request, errorId, digest, error);
@@ -4051,7 +4500,12 @@ function abort(request, reason) {
     if (abortListeners.size > 0) {
       var _error;
 
-      if (enablePostpone && typeof reason === 'object' && reason !== null && reason.$$typeof === REACT_POSTPONE_TYPE) ; else {
+      if (enablePostpone && typeof reason === 'object' && reason !== null && reason.$$typeof === REACT_POSTPONE_TYPE) {
+        // We aborted with a Postpone but since we're passing this to an
+        // external handler, passing this object would leak it outside React.
+        // We create an alternative reason for it instead.
+        _error = new Error('The render was aborted due to being postponed.');
+      } else {
         _error = reason === undefined ? new Error('The render was aborted by the server without a reason.') : reason;
       }
 

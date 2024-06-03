@@ -266,3 +266,19 @@ export function createPostponedAbortSignal(reason: string): AbortSignal {
   }
   return controller.signal
 }
+
+/**
+ * This is a bit of a hack to allow us to abort a render using a Postpone instance instead of an Error which changes React's
+ * abort semantics slightly.
+ */
+export function getPostponedReason(reason: string): unknown {
+  assertPostpone()
+  try {
+    React.unstable_postpone(reason)
+  } catch (x: unknown) {
+    return x
+  }
+  throw new Error(
+    'Invariant: React.unstable_postpone did not throw when it was expected to'
+  )
+}

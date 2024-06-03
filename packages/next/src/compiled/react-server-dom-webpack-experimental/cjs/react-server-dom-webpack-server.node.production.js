@@ -14,6 +14,7 @@ require("crypto");
 var async_hooks = require("async_hooks"),
   ReactDOM = require("react-dom"),
   React = require("react"),
+  scheduleMicrotask = queueMicrotask,
   currentView = null,
   writtenBytes = 0,
   destinationHasCapacity = !0;
@@ -1026,7 +1027,11 @@ function renderFunctionComponent(request, task, key, Component, props) {
   thenableIndexCounter = 0;
   thenableState = prevThenableState;
   Component = Component(props, void 0);
-  if ("object" === typeof Component && null !== Component) {
+  if (
+    "object" === typeof Component &&
+    null !== Component &&
+    Component.$$typeof !== CLIENT_REFERENCE_TAG$1
+  ) {
     if ("function" === typeof Component.then) {
       props = Component;
       if ("fulfilled" === props.status) return props.value;
@@ -1135,7 +1140,7 @@ function pingTask(request, task) {
   pingedTasks.push(task);
   1 === pingedTasks.length &&
     ((request.flushScheduled = null !== request.destination),
-    setImmediate(function () {
+    scheduleMicrotask(function () {
       return performWork(request);
     }));
 }
@@ -1888,17 +1893,15 @@ function startWork(request) {
   });
 }
 function enqueueFlush(request) {
-  if (
-    !1 === request.flushScheduled &&
+  !1 === request.flushScheduled &&
     0 === request.pingedTasks.length &&
-    null !== request.destination
-  ) {
-    var destination = request.destination;
-    request.flushScheduled = !0;
+    null !== request.destination &&
+    ((request.flushScheduled = !0),
     setImmediate(function () {
-      return flushCompletedChunks(request, destination);
-    });
-  }
+      request.flushScheduled = !1;
+      var destination = request.destination;
+      destination && flushCompletedChunks(request, destination);
+    }));
 }
 function startFlowing(request, destination) {
   if (1 === request.status)
@@ -2772,12 +2775,12 @@ exports.decodeReplyFromBusboy = function (busboyStream, webpackMap, options) {
         "React doesn't accept base64 encoded file uploads because we don't expect form data passed from a browser to ever encode data that way. If that's the wrong assumption, we can easily fix it."
       );
     pendingFiles++;
-    var JSCompiler_object_inline_chunks_203 = [];
+    var JSCompiler_object_inline_chunks_201 = [];
     value.on("data", function (chunk) {
-      JSCompiler_object_inline_chunks_203.push(chunk);
+      JSCompiler_object_inline_chunks_201.push(chunk);
     });
     value.on("end", function () {
-      var blob = new Blob(JSCompiler_object_inline_chunks_203, {
+      var blob = new Blob(JSCompiler_object_inline_chunks_201, {
         type: mimeType
       });
       response._formData.append(name, blob, filename);
