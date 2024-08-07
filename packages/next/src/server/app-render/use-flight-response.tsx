@@ -4,9 +4,6 @@ import type { BinaryStreamOf } from './app-render'
 import { htmlEscapeJsonString } from '../htmlescape'
 import type { DeepReadonly } from '../../shared/lib/deep-readonly'
 
-import { prerenderAsyncStorage } from './prerender-async-storage.external'
-import { CacheSignal } from './cache-signal'
-
 const isEdgeRuntime = process.env.NEXT_RUNTIME === 'edge'
 
 const INLINE_FLIGHT_PAYLOAD_BOOTSTRAP = 0
@@ -179,39 +176,4 @@ function writeFlightDataInstruction(
       `${scriptStart}self.__next_f.push(${htmlInlinedData})</script>`
     )
   )
-}
-
-export async function warmFlightResponse(
-  flightStream: BinaryStreamOf<any>,
-  clientReferenceManifest: DeepReadonly<ClientReferenceManifest>
-) {
-  let createFromReadableStream
-  if (process.env.TURBOPACK) {
-    createFromReadableStream =
-      // eslint-disable-next-line import/no-extraneous-dependencies
-      require('react-server-dom-turbopack/client.edge').createFromReadableStream
-  } else {
-    createFromReadableStream =
-      // eslint-disable-next-line import/no-extraneous-dependencies
-      require('react-server-dom-webpack/client.edge').createFromReadableStream
-  }
-
-  const cacheSignal = new CacheSignal()
-  const moduleWarmpupStore = {
-    cacheSignal,
-    controller: null,
-    dynamicTracking: null,
-  }
-  prerenderAsyncStorage.run(
-    moduleWarmpupStore,
-    createFromReadableStream,
-    flightStream,
-    {
-      ssrManifest: {
-        moduleLoading: clientReferenceManifest.moduleLoading,
-        moduleMap: clientReferenceManifest.ssrModuleMapping,
-      },
-    }
-  )
-  await cacheSignal.cacheReady()
 }

@@ -20,9 +20,9 @@
  * read that data outside the cache and pass it in as an argument to the cached function.
  */
 
-// Once postpone is in stable we should switch to importing the postpone export directly
 import type { StaticGenerationStore } from '../../client/components/static-generation-async-storage.external'
 
+// Once postpone is in stable we should switch to importing the postpone export directly
 import React from 'react'
 
 import { DynamicServerError } from '../../client/components/hooks-server-context'
@@ -67,12 +67,6 @@ export function createDynamicTrackingState(
   }
 }
 
-export function getFirstDynamicReason(
-  trackingState: DynamicTrackingState
-): undefined | string {
-  return trackingState.dynamicAccesses[0]?.expression
-}
-
 /**
  * This function communicates that the current scope should be treated as dynamic.
  *
@@ -102,20 +96,11 @@ export function markCurrentScopeAsDynamic(
 
   const prerenderStore = prerenderAsyncStorage.getStore()
   if (prerenderStore) {
-    if (prerenderStore.controller) {
-      // We're prerendering the RSC stream with dynamicIO enabled and we need to abort the
-      // current render because something dynamic is being used.
-      // This won't throw so we still need to fall through to determine if/how we handle
-      // this specific dynamic request.
-      abortRSCRenderWithTracking(prerenderStore.controller)
-      errorWithTracking(prerenderStore.dynamicTracking, expression, store.route)
-    } else {
-      postponeWithTracking(
-        prerenderStore.dynamicTracking,
-        expression,
-        store.route
-      )
-    }
+    postponeWithTracking(
+      prerenderStore.dynamicTracking,
+      expression,
+      store.route
+    )
   } else {
     store.revalidate = 0
 
@@ -157,20 +142,11 @@ export function trackDynamicDataAccessed(
 
   const prerenderStore = prerenderAsyncStorage.getStore()
   if (prerenderStore) {
-    if (prerenderStore.controller) {
-      // We're prerendering the RSC stream with dynamicIO enabled and we need to abort the
-      // current render because something dynamic is being used.
-      // This won't throw so we still need to fall through to determine if/how we handle
-      // this specific dynamic request.
-      abortRSCRenderWithTracking(prerenderStore.controller)
-      errorWithTracking(prerenderStore.dynamicTracking, expression, store.route)
-    } else {
-      postponeWithTracking(
-        prerenderStore.dynamicTracking,
-        expression,
-        store.route
-      )
-    }
+    postponeWithTracking(
+      prerenderStore.dynamicTracking,
+      expression,
+      store.route
+    )
   } else {
     store.revalidate = 0
 
@@ -200,29 +176,6 @@ export function Postpone({ reason, route }: PostponeProps): never {
   postponeWithTracking(dynamicTracking, reason, route)
 }
 
-function errorWithTracking(
-  dynamicTracking: null | DynamicTrackingState,
-  expression: string,
-  route: string
-): never {
-  if (dynamicTracking) {
-    dynamicTracking.dynamicAccesses.push({
-      // When we aren't debugging, we don't need to create another error for the
-      // stack trace.
-      stack: dynamicTracking.isDebugDynamicAccesses
-        ? new Error().stack
-        : undefined,
-      expression,
-    })
-  }
-  const reason =
-    `Route ${route} needs to bail out of prerendering at this point because it used ${expression}. ` +
-    `React throws this special object to indicate where. It should not be caught by ` +
-    `your own try/catch. Learn more: https://nextjs.org/docs/messages/ppr-caught-error`
-
-  throw new Error(reason)
-}
-
 function postponeWithTracking(
   dynamicTracking: null | DynamicTrackingState,
   expression: string,
@@ -245,32 +198,6 @@ function postponeWithTracking(
     `your own try/catch. Learn more: https://nextjs.org/docs/messages/ppr-caught-error`
 
   React.unstable_postpone(reason)
-}
-
-const NEXT_PRERENDER_INTERRUPTED = 'NEXT_PRERENDER_INTERRUPTED'
-
-function abortRSCRenderWithTracking(controller: AbortController): void {
-  if (hasPostpone) {
-    try {
-      React.unstable_postpone(NEXT_PRERENDER_INTERRUPTED)
-    } catch (e) {
-      controller.abort(e)
-    }
-  } else {
-    controller.abort(new Error(NEXT_PRERENDER_INTERRUPTED))
-  }
-}
-
-export function isRenderInterruptedReason(reason: string) {
-  return reason === NEXT_PRERENDER_INTERRUPTED
-}
-
-export function isRenderInterruptedError(error: unknown) {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as any).message === NEXT_PRERENDER_INTERRUPTED
-  )
 }
 
 export function usedDynamicAPIs(
@@ -339,20 +266,4 @@ export function createPostponedAbortSignal(reason: string): AbortSignal {
     controller.abort(x)
   }
   return controller.signal
-}
-
-/**
- * This is a bit of a hack to allow us to abort a render using a Postpone instance instead of an Error which changes React's
- * abort semantics slightly.
- */
-export function getPostponedReason(reason: string): unknown {
-  assertPostpone()
-  try {
-    React.unstable_postpone(reason)
-  } catch (x: unknown) {
-    return x
-  }
-  throw new Error(
-    'Invariant: React.unstable_postpone did not throw when it was expected to'
-  )
 }

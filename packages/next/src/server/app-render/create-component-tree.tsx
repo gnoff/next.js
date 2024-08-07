@@ -262,8 +262,6 @@ async function createComponentTreeInternal({
     }
   }
 
-  const isStaticGeneration = staticGenerationStore.isStaticGeneration
-
   // If there's a dynamic usage error attached to the store, throw it.
   if (staticGenerationStore.dynamicUsageErr) {
     throw staticGenerationStore.dynamicUsageErr
@@ -293,10 +291,7 @@ async function createComponentTreeInternal({
         <NotFoundBoundary
           notFound={
             NotFoundComponent ? (
-              <Segment
-                isStaticGeneration={isStaticGeneration}
-                ready={getMetadataReady}
-              >
+              <>
                 {layerAssets}
                 {/*
                  * We are intentionally only forwarding params to the root layout, as passing any of the parallel route props
@@ -306,7 +301,7 @@ async function createComponentTreeInternal({
                   {notFoundStyles}
                   <NotFoundComponent />
                 </RootLayoutComponent>
-              </Segment>
+              </>
             ) : undefined
           }
         >
@@ -492,7 +487,7 @@ async function createComponentTreeInternal({
   }
 
   const loadingData: LoadingModuleData = Loading
-    ? [<Loading key="l" />, loadingStyles, loadingScripts]
+    ? [<Loading />, loadingStyles, loadingScripts]
     : null
 
   // When the segment does not have a layout or page we still have to add the layout router to ensure the path holds the loading component
@@ -500,14 +495,15 @@ async function createComponentTreeInternal({
     return [
       actualSegment,
       parallelRouteCacheNodeSeedData,
-      <Segment
-        key="n"
-        isStaticGeneration={isStaticGeneration}
-        ready={getMetadataReady}
-      >
+      // TODO: I don't think the extra fragment is necessary. React treats top
+      // level fragments as transparent, i.e. the runtime behavior should be
+      // identical even without it. But maybe there's some findDOMNode-related
+      // reason that I'm not aware of, so I'm leaving it as-is out of extreme
+      // caution, for now.
+      <>
         {layerAssets}
         {parallelRouteProps.children}
-      </Segment>,
+      </>,
       loadingData,
     ]
   }
@@ -523,25 +519,17 @@ async function createComponentTreeInternal({
   // along the parent path of a force-dynamic segment will hit this condition effectively making the entire
   // render force-dynamic. We should refactor this function so that we can correctly track which segments
   // need to be dynamic
-  if (
-    staticGenerationStore.isStaticGeneration &&
-    staticGenerationStore.forceDynamic &&
-    experimental.isRoutePPREnabled
-  ) {
+  if (staticGenerationStore.forceDynamic && experimental.isRoutePPREnabled) {
     return [
       actualSegment,
       parallelRouteCacheNodeSeedData,
-      <Segment
-        key="n"
-        isStaticGeneration={isStaticGeneration}
-        ready={getMetadataReady}
-      >
+      <>
         <Postpone
           reason='dynamic = "force-dynamic" was used'
           route={staticGenerationStore.route}
         />
         {layerAssets}
-      </Segment>,
+      </>,
       loadingData,
     ]
   }
@@ -584,9 +572,9 @@ async function createComponentTreeInternal({
   }
   props.params = currentParams
 
+  let segmentElement: React.ReactNode
   if (isPage) {
     // Assign searchParams to props if this is a page
-    let pageElement: React.ReactNode
     if (isClientComponent) {
       // When we are passing searchParams to a client component Page we don't want to track the dynamic access
       // here in the RSC layer because the serialization will trigger a dynamic API usage.
@@ -594,89 +582,68 @@ async function createComponentTreeInternal({
       // which can among other things adds the dynamic tracking before rendering the page.
       // @TODO make the root wrapper part of next-app-loader so we don't need the extra client component
       props.searchParams = createUntrackedSearchParams(query)
-      pageElement = <ClientPageRoot props={props} Component={Component} />
+      segmentElement = (
+        <>
+          <MetadataOutlet getReady={getMetadataReady} />
+          <ClientPageRoot props={props} Component={Component} />
+          {layerAssets}
+        </>
+      )
     } else {
       // If we are passing searchParams to a server component Page we need to track their usage in case
       // the current render mode tracks dynamic API usage.
       props.searchParams = createDynamicallyTrackedSearchParams(query)
-      pageElement = <Component {...props} />
-    }
-    return [
-      actualSegment,
-      parallelRouteCacheNodeSeedData,
-      <React.Fragment key="n">
-        <MetadataOutlet ready={getMetadataReady} />
-        <Segment
-          isStaticGeneration={isStaticGeneration}
-          ready={getMetadataReady}
-        >
-          {pageElement}
+      segmentElement = (
+        <>
+          <MetadataOutlet getReady={getMetadataReady} />
+          <Component {...props} />
           {layerAssets}
-        </Segment>
-      </React.Fragment>,
-      loadingData,
-    ]
+        </>
+      )
+    }
   } else {
     // For layouts we just render the component
-    return [
-      actualSegment,
-      parallelRouteCacheNodeSeedData,
-      // It is critical that this tree render something other than `null` because the client router uses
-      // null to represent an lazy hole. The current implementation satisfies this because the two inner slots
-      // ensure there is a fragment even if both slots render null. If we ever refactor this to only render the component
-      // or similar we need to ensure there is a fragment. Long term we should move to using a Symbol to communicate
-      // a lazy hole rather than null
-      <Segment
-        key="n"
-        isStaticGeneration={isStaticGeneration}
-        ready={getMetadataReady}
-      >
+    segmentElement = (
+      <>
         {layerAssets}
         <Component {...props} />
-      </Segment>,
-      loadingData,
-    ]
+      </>
+    )
   }
+
+  return [
+    actualSegment,
+    parallelRouteCacheNodeSeedData,
+    <>
+      {segmentElement}
+      {/* This null is currently critical. The wrapped Component can render null and if there was not fragment
+            surrounding it this would look like a pending tree data state on the client which will cause an error
+            and break the app. Long-term we need to move away from using null as a partial tree identifier since it
+            is a valid return type for the components we wrap. Once we make this change we can safely remove the
+            fragment. The reason the extra null here is required is that fragments which only have 1 child are elided.
+            If the Component above renders null the actual tree data will look like `[null, null]`. If we remove the extra
+            null it will look like `null` (the array is elided) and this is what confuses the client router.
+            TODO-APP update router to use a Symbol for partial tree detection */}
+      {null}
+    </>,
+    loadingData,
+  ]
 }
 
 async function MetadataOutlet({
-  ready,
+  getReady,
 }: {
-  ready: () => Promise<void> & { status?: string; value?: unknown }
+  getReady: () => Promise<void> & { status?: string; value?: unknown }
 }) {
-  const r = ready()
+  const ready = getReady()
   // We actually expect this to be an instrumented promise and once this file is properly
   // moved to the RSC module graph we can switch to using React.use for this synchronous unwrapping.
   // The synchronous unwrapping will become important with dynamic IO since we want to resolve metadata
   // before anything dynamic can be triggered
-  if (r.status === 'rejected') {
-    throw r.value
-  } else if (r.status !== 'fulfilled') {
-    // returning here is like awaiting the ready promise
-    await r
+  if (ready.status === 'rejected') {
+    throw ready.value
+  } else if (ready.status !== 'fulfilled') {
+    await ready
   }
   return null
-}
-
-async function Segment({
-  isStaticGeneration,
-  ready,
-  children,
-}: {
-  isStaticGeneration: boolean
-  ready?: () => Promise<void>
-  children: React.ReactNode
-}) {
-  if (isStaticGeneration && ready) {
-    // During static generation we wait for metadata to complete before rendering segments.
-    // This is slower but it allows us to ensure that metadata is finished before we start
-    // rendering the segment which can synchronously abort the render is certain circumstances
-    try {
-      await ready()
-    } catch (e) {
-      // we'll let the MetadataReady component rendered with the page error to let the right
-      // error boundary catch this error
-    }
-  }
-  return children
 }
