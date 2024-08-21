@@ -5,7 +5,6 @@ process.env.__TEST_SENTINEL = 'at buildtime'
 describe('dynamic-io', () => {
   const { next, isNextDev, skipped } = nextTestSetup({
     files: __dirname,
-    skipStart: true,
     skipDeployment: true,
   })
 
@@ -14,7 +13,6 @@ describe('dynamic-io', () => {
   }
 
   beforeAll(async () => {
-    await next.start()
     await next.render('/bootstrap_runtime')
   })
 
@@ -54,9 +52,11 @@ describe('dynamic-io', () => {
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
+      expect($('#inner').text()).toBe('at runtime')
     } else {
       expect($('#layout').text()).toBe('at buildtime')
       expect($('#page').text()).toBe('at buildtime')
+      expect($('#inner').text()).toBe('at runtime')
     }
 
     $ = await next.render$('/cases/task_root', {})
@@ -85,9 +85,11 @@ describe('dynamic-io', () => {
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
+      expect($('#inner').text()).toBe('at runtime')
     } else {
       expect($('#layout').text()).toBe('at buildtime')
       expect($('#page').text()).toBe('at buildtime')
+      expect($('#inner').text()).toBe('at runtime')
     }
 
     $ = await next.render$('/cases/fetch_mixed_root', {})
@@ -116,9 +118,11 @@ describe('dynamic-io', () => {
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
+      expect($('#inner').text()).toBe('at runtime')
     } else {
       expect($('#layout').text()).toBe('at buildtime')
       expect($('#page').text()).toBe('at buildtime')
+      expect($('#inner').text()).toBe('at runtime')
     }
 
     $ = await next.render$('/cases/io_mixed_root', {})
@@ -136,26 +140,26 @@ describe('dynamic-io', () => {
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
-      // @TODO why is the cookie set in bootstrap_runtime not being read here?
-      expect($('#value').text()).toBe('~not-found~')
+      expect($('#inner').text()).toBe('at runtime')
+      expect($('#value').text()).toBe('hello')
     } else {
       expect($('#layout').text()).toBe('at buildtime')
       expect($('#page').text()).toBe('at buildtime')
-      // @TODO why is the cookie set in bootstrap_runtime not being read here?
-      expect($('#value').text()).toBe('~not-found~')
+      expect($('#inner').text()).toBe('at runtime')
+      expect($('#value').text()).toBe('hello')
     }
 
     $ = await next.render$('/cases/dynamic_api_cookies_root', {})
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
-      // @TODO why is the cookie set in bootstrap_runtime not being read here?
-      expect($('#value').text()).toBe('~not-found~')
+      expect($('#inner').text()).toBe('at runtime')
+      expect($('#value').text()).toBe('hello')
     } else {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
-      // @TODO why is the cookie set in bootstrap_runtime not being read here?
-      expect($('#value').text()).toBe('~not-found~')
+      expect($('#inner').text()).toBe('at runtime')
+      expect($('#value').text()).toBe('hello')
     }
   })
 
@@ -172,10 +176,12 @@ describe('dynamic-io', () => {
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
+      expect($('#inner').text()).toBe('at runtime')
       expect($('#value').text()).toBe('my sentinel')
     } else {
       expect($('#layout').text()).toBe('at buildtime')
       expect($('#page').text()).toBe('at buildtime')
+      expect($('#inner').text()).toBe('at runtime')
       expect($('#value').text()).toBe('my sentinel')
     }
 
@@ -204,9 +210,11 @@ describe('dynamic-io', () => {
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
+      expect($('#inner').text()).toBe('at runtime')
     } else {
       expect($('#layout').text()).toBe('at buildtime')
       expect($('#page').text()).toBe('at buildtime')
+      expect($('#inner').text()).toBe('at runtime')
     }
 
     $ = await next.render$('/cases/dynamic_api_no_store_root', {})
@@ -227,10 +235,12 @@ describe('dynamic-io', () => {
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
+      expect($('#inner').text()).toBe('at runtime')
       expect($('#value').text()).toBe('my sentinel')
     } else {
       expect($('#layout').text()).toBe('at buildtime')
       expect($('#page').text()).toBe('at buildtime')
+      expect($('#inner').text()).toBe('at runtime')
       expect($('#value').text()).toBe('my sentinel')
     }
 
@@ -257,10 +267,12 @@ describe('dynamic-io', () => {
     if (isNextDev) {
       expect($('#layout').text()).toBe('at runtime')
       expect($('#page').text()).toBe('at runtime')
+      expect($('#inner').text()).toBe('at runtime')
       expect($('#value').text()).toBe('my sentinel')
     } else {
       expect($('#layout').text()).toBe('at buildtime')
       expect($('#page').text()).toBe('at buildtime')
+      expect($('#inner').text()).toBe('at runtime')
       expect($('#value').text()).toBe('my sentinel')
     }
 

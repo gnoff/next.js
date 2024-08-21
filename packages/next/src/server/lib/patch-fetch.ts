@@ -854,31 +854,34 @@ export function createPatchedFetcher(
               statusText: revalidatedResult.statusText,
             })
           }
-          const pendingResponse = doOriginalFetch(true, cacheReasonOverride)
+
           /**
            * We used to just resolve the Response and clone it however for static generation
-           * with dynamicIO we need the response to be able to be resovled in a microtask
+           * with dynamicIO we need the response to be able to be resolved in a microtask
            * and Response#clone() will never have a body that can resolve in a microtask in node (as observed through experimentation)
            * So instead we await the body and then when it is available we construct manually
            * cloned Response objects with the body as an ArrayBuffer. This will be resolable in
            * a microtask making it compatiable with dynamicIO
            */
+          const pendingResponse = doOriginalFetch(true, cacheReasonOverride)
+          const nextRevalidate = pendingResponse
+            .then(async (response) => {
+              return {
+                body: await response.arrayBuffer(),
+                headers: response.headers,
+                status: response.status,
+                statusText: response.statusText,
+              }
+            })
+            .finally(() => {
+              staticGenerationStore.pendingRevalidates ??= {}
+              delete staticGenerationStore.pendingRevalidates[
+                prendingRevalidateKey
+              ]
+            })
+          nextRevalidate.catch(() => {})
           staticGenerationStore.pendingRevalidates[prendingRevalidateKey] =
-            pendingResponse
-              .then(async (response) => {
-                return {
-                  body: await response.arrayBuffer(),
-                  headers: response.headers,
-                  status: response.status,
-                  statusText: response.statusText,
-                }
-              })
-              .finally(() => {
-                staticGenerationStore.pendingRevalidates ??= {}
-                delete staticGenerationStore.pendingRevalidates[
-                  prendingRevalidateKey
-                ]
-              })
+            nextRevalidate
           return (await pendingResponse).clone()
         } else {
           return doOriginalFetch(false, cacheReasonOverride)

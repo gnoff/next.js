@@ -1859,6 +1859,7 @@ function retryTask(request, task) {
   }
 }
 function performWork(request) {
+  console.log('performWork')
   var prevDispatcher = ReactSharedInternalsServer.H;
   ReactSharedInternalsServer.H = HooksDispatcher;
   var prevRequest = currentRequest;
@@ -1924,12 +1925,16 @@ function flushCompletedChunks(request, destination) {
     (request.destination = null));
 }
 function startWork(request) {
+  const val = (Math.random() * 10000 | 0).toString(16);
+  console.log(val, "startWork", setTimeoutOrImmediate === setImmediate, setTimeout === setImmediate)
   request.flushScheduled = null !== request.destination;
   supportsRequestStorage
     ? setTimeoutOrImmediate(function () {
+        console.log(val, 'startWork Task')
         return requestStorage.run(request, performWork, request);
       }, 0)
     : setTimeoutOrImmediate(function () {
+        console.log('startWork Task')
         return performWork(request);
       }, 0);
 }

@@ -10,6 +10,31 @@
  * A shorter term work around would be to patch React to use setImmediate instead of setTimeout
  * in the edge builds since this might also avoid setTimeout throttling.
  */
-export async function waitAtLeastOneReactRenderTask() {
+export async function waitAtLeastOneReactRenderTask(
+  url?: string,
+  tag?: string
+) {
+  // @ts-ignore
+  console.log(url, 'schedule one task', tag, setTimeout === setImmediate)
+  if (url && tag) {
+    return new Promise((r) => {
+      setTimeout(() => {
+        console.log(url, 'execute one task', tag)
+        // @ts-ignore
+        r()
+      })
+    })
+  }
   return new Promise((r) => setTimeout(r, 0))
+  // console.log(url, 'schedule one task', tag)
+  // if (url && tag) {
+  //   return new Promise((r) => {
+  //     setImmediate(() => {
+  //       console.log(url, 'execute one task', tag)
+  //       // @ts-ignore
+  //       r()
+  //     })
+  //   })
+  // }
+  // return new Promise((r) => setImmediate(r))
 }

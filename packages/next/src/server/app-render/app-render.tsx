@@ -1714,17 +1714,7 @@ async function prerenderToStream(
          */
 
         const PRERENDER_COMPLETE = 'NEXT_PRERENDER_COMPLETE'
-        const abortReason = getPostponedReason('NEXT_PRERENDER_COMPLETE')
-
-        let reactServerIsDynamic = false
-        function onError(err: unknown, errorInfo: ErrorInfo) {
-          if (isRenderInterruptedError(err)) {
-            reactServerIsDynamic = true
-            return
-          }
-
-          return serverComponentsErrorHandler(err, errorInfo)
-        }
+        const abortReason = getPostponedReason(PRERENDER_COMPLETE)
 
         const cacheSignal = new CacheSignal()
         const prospectiveRenderPrerenderStore: PrerenderStore = {
@@ -1734,14 +1724,14 @@ async function prerenderToStream(
           // from the prerender store this time.
           controller: null,
           // With PPR during Prerender we don't need to track individual dynamic reasons
-          // becuase we will always do a final render after caches have filled and we
+          // because we will always do a final render after caches have filled and we
           // will track it again there
           dynamicTracking: null,
         }
 
         let flightController = new AbortController()
-        // We're not going to use the result of this render because the only time we could potentially
-        // to that is if it completes in a microtask and that's likely very rare for any non-trivial app
+        // We're not going to use the result of this render because the only time it could be used
+        // is if it completes in a microtask and that's likely very rare for any non-trivial app
         const firstAttemptRSCPayload = await getRSCPayload(
           tree,
           ctx,
@@ -1757,7 +1747,9 @@ async function prerenderToStream(
           clientReferenceManifest.clientModules,
           {
             nonce: ctx.nonce,
-            onError,
+            // This render will be thrown away so we don't need to track errors or postpones
+            onError: undefined,
+            onPostpone: undefined,
             // we don't care to track postpones during the prospective render because we need
             // to always do a final render anyway
             signal: flightController.signal,
@@ -1773,7 +1765,6 @@ async function prerenderToStream(
 
         // Reset the dynamic IO state for the final render
         flightController = new AbortController()
-        reactServerIsDynamic = false
         dynamicTracking = createDynamicTrackingState(
           renderOpts.isDebugDynamicAccesses
         )
@@ -1787,7 +1778,19 @@ async function prerenderToStream(
           dynamicTracking,
         }
 
+        let reactServerIsDynamic = false
+        function onError(err: unknown, errorInfo: ErrorInfo) {
+          console.log(req.url, 'onError rsc', err)
+          if (isRenderInterruptedError(err)) {
+            reactServerIsDynamic = true
+            return
+          }
+
+          return serverComponentsErrorHandler(err, errorInfo)
+        }
+
         function onPostpone(reason: string) {
+          console.log(req.url, 'RSC onPostpone', reason)
           if (
             reason === PRERENDER_COMPLETE ||
             isRenderInterruptedReason(reason)
@@ -1817,13 +1820,22 @@ async function prerenderToStream(
             }
           )
         )
-        await waitAtLeastOneReactRenderTask()
+        await waitAtLeastOneReactRenderTask(req.url, 'rsc 1')
         flightController.abort(abortReason)
+        console.log(req.url, 'rsc dynamic', reactServerIsDynamic)
 
+        new Promise((r) => {
+          console.log(req.url, 'warm')
+          // @ts-ignore
+          r()
+        }).then(() => {
+          console.log(req.url, 'm1')
+        })
         await warmFlightResponse(
           reactServerResult.getStream(),
           clientReferenceManifest
         )
+        console.log(req.url, 'warm complete')
 
         const SSRController = new AbortController()
         const ssrPrerenderStore: PrerenderStore = {
@@ -1838,6 +1850,7 @@ async function prerenderToStream(
         }
         let SSRIsDynamic = false
         function SSROnError(err: unknown, errorInfo: unknown) {
+          console.log(req.url, 'onError ssr', err)
           if (isRenderInterruptedError(err)) {
             SSRIsDynamic = true
             return
@@ -1847,6 +1860,7 @@ async function prerenderToStream(
         }
 
         function SSROnPostpone(reason: string) {
+          console.log(req.url, 'SSROnPostpone', reason)
           if (
             reason === PRERENDER_COMPLETE ||
             isRenderInterruptedReason(reason)
@@ -1898,6 +1912,7 @@ async function prerenderToStream(
         await waitAtLeastOneReactRenderTask()
         await waitAtLeastOneReactRenderTask()
         SSRController.abort(abortReason)
+        console.log(req.url, 'ssr dynamic', SSRIsDynamic)
 
         // We need to wait for the primary render to finish before we can proceed
         const { prelude, postponed } = await pendingResult
@@ -2047,8 +2062,8 @@ async function prerenderToStream(
           ctx,
           asNotFound
         )
-        // We're not going to use the result of this render because the only time we could potentially
-        // to that is if it completes in a microtask and that's likely very rare for any non-trivial app
+        // We're not going to use the result of this render because the only time it could be used
+        // is if it completes in a microtask and that's likely very rare for any non-trivial app
         prerenderAsyncStorage.run(
           // The store to scope
           prospectiveRenderPrerenderStore,
@@ -2068,7 +2083,7 @@ async function prerenderToStream(
         await cacheSignal.cacheReady()
         if (reactServerIsDynamic) {
           // During a prospective render the only dynamic thing that can happen is a synchronous dynamic
-          // API acess. We expect to have a tracked expression to use for our dynamic error but we fall back
+          // API access. We expect to have a tracked expression to use for our dynamic error but we fall back
           // to a generic error if we don't.
           const dynamicReason = getFirstDynamicReason(dynamicTracking)
           if (dynamicReason) {
@@ -2470,6 +2485,7 @@ async function prerenderToStream(
       }
     }
   } catch (err) {
+    console.log(req.url, 'error', err)
     if (
       isStaticGenBailoutError(err) ||
       (typeof err === 'object' &&
@@ -2648,7 +2664,8 @@ function trackChunkLoading(load: Promise<unknown>) {
 
 export async function warmFlightResponse(
   flightStream: BinaryStreamOf<any>,
-  clientReferenceManifest: DeepReadonly<ClientReferenceManifest>
+  clientReferenceManifest: DeepReadonly<ClientReferenceManifest>,
+  url?: string
 ) {
   let createFromReadableStream
   if (process.env.TURBOPACK) {
@@ -2672,7 +2689,11 @@ export async function warmFlightResponse(
   // we'll we can infer that there are none to load from this flight response
   trackChunkLoading(waitAtLeastOneReactRenderTask())
   return new Promise((r) => {
-    chunkListeners.push(r)
+    chunkListeners.push(() => {
+      console.log(url, 'chunk listener called')
+      // @ts-ignore
+      r()
+    })
   })
 }
 
