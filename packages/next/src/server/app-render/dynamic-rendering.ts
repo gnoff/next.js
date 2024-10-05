@@ -317,16 +317,25 @@ export function trackDynamicDataInDynamicRender(
 // Despite it's name we don't actually abort unless we have a controller to call abort on
 // There are times when we let a prerender run long to discover caches where we want the semantics
 // of tracking dynamic access without terminating the prerender early
-function abortOnSynchronousDynamicDataAccess(
+export function abortOnSynchronousDynamicDataAccess(
   route: string,
   expression: string,
   prerenderStore: PrerenderStoreModern
 ): void {
+  console.log('trying to abort')
+  if (prerenderStore.dynamicTracking) {
+    const disallowedDynamic = prerenderStore.dynamicTracking.disallowedDynamic
+    if (disallowedDynamic.syncDynamicExpression === '') {
+      disallowedDynamic.syncDynamicExpression = expression
+    }
+  }
+
   const reason = `Route ${route} needs to bail out of prerendering at this point because it used ${expression}.`
 
   const error = createPrerenderInterruptedError(reason)
 
   if (prerenderStore.controller) {
+    console.log('actually aborting to abort')
     prerenderStore.controller.abort(error)
   }
 
@@ -359,12 +368,6 @@ export function abortAndThrowOnSynchronousDynamicDataAccess(
   expression: string,
   prerenderStore: PrerenderStoreModern
 ): never {
-  if (prerenderStore.dynamicTracking) {
-    const disallowedDynamic = prerenderStore.dynamicTracking.disallowedDynamic
-    if (disallowedDynamic.syncDynamicExpression === '') {
-      disallowedDynamic.syncDynamicExpression = expression
-    }
-  }
   abortOnSynchronousDynamicDataAccess(route, expression, prerenderStore)
   throw createPrerenderInterruptedError(
     `Route ${route} needs to bail out of prerendering at this point because it used ${expression}.`
