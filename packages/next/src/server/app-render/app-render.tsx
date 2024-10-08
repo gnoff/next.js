@@ -1854,10 +1854,13 @@ async function prerenderToStream(
         const PRERENDER_COMPLETE = 'NEXT_PRERENDER_COMPLETE'
         const abortReason = new Error(PRERENDER_COMPLETE)
 
+        let flightController = new AbortController()
         const cacheSignal = new CacheSignal()
+
         const prospectiveRenderPrerenderStore: PrerenderStore = {
           type: 'prerender',
           pathname: ctx.requestStore.url.pathname,
+          renderSignal: flightController.signal,
           cacheSignal,
           // During the prospective render we don't want to synchronously abort on dynamic access
           // because it could prevent us from discovering all caches in siblings. So we omit the controller
@@ -1868,8 +1871,6 @@ async function prerenderToStream(
           // will track it again there
           dynamicTracking: null,
         }
-
-        let flightController = new AbortController()
 
         let reactServerIsDynamic = false
         function onError(err: unknown) {
@@ -1950,6 +1951,7 @@ async function prerenderToStream(
         const finalRenderPrerenderStore: PrerenderStore = {
           type: 'prerender',
           pathname: ctx.requestStore.url.pathname,
+          renderSignal: flightController.signal,
           // During the final prerender we don't need to track cache access so we omit the signal
           cacheSignal: null,
           // During the final render we do want to abort synchronously on dynamic access so we
@@ -2006,6 +2008,7 @@ async function prerenderToStream(
         const ssrPrerenderStore: PrerenderStore = {
           type: 'prerender',
           pathname: ctx.requestStore.url.pathname,
+          renderSignal: SSRController.signal,
           // For HTML Generation we don't need to track cache reads (RSC only)
           cacheSignal: null,
           // We expect the SSR render to complete in a single Task and need to be able to synchronously abort
@@ -2211,6 +2214,7 @@ async function prerenderToStream(
         const prospectiveRenderPrerenderStore: PrerenderStore = {
           type: 'prerender',
           pathname: ctx.requestStore.url.pathname,
+          renderSignal: flightController.signal,
           cacheSignal,
           // When PPR is off we can synchronously abort the prospective render because we will
           // always hit this path on the final render and thus we can skip the final render and just
@@ -2290,6 +2294,7 @@ async function prerenderToStream(
         const finalRenderPrerenderStore: PrerenderStore = {
           type: 'prerender',
           pathname: ctx.requestStore.url.pathname,
+          renderSignal: flightController.signal,
           // During the final prerender we don't need to track cache access so we omit the signal
           cacheSignal: null,
           controller: flightController,
@@ -2300,6 +2305,7 @@ async function prerenderToStream(
         const ssrPrerenderStore: PrerenderStore = {
           type: 'prerender',
           pathname: ctx.requestStore.url.pathname,
+          renderSignal: SSRController.signal,
           // For HTML Generation we don't need to track cache reads (RSC only)
           cacheSignal: null,
           // We expect the SSR render to complete in a single Task and need to be able to synchronously abort
@@ -2479,10 +2485,8 @@ async function prerenderToStream(
         renderOpts.isDebugDynamicAccesses
       )
       const reactServerPrerenderStore: PrerenderStore = {
-        type: 'prerender',
+        type: 'prerender-ppr',
         pathname: ctx.requestStore.url.pathname,
-        cacheSignal: null,
-        controller: null,
         dynamicTracking,
       }
       const RSCPayload = await workUnitAsyncStorage.run(
@@ -2507,10 +2511,8 @@ async function prerenderToStream(
         ))
 
       const ssrPrerenderStore: PrerenderStore = {
-        type: 'prerender',
+        type: 'prerender-ppr',
         pathname: ctx.requestStore.url.pathname,
-        cacheSignal: null,
-        controller: null,
         dynamicTracking,
       }
 

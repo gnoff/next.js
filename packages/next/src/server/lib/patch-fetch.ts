@@ -175,6 +175,7 @@ export function addImplicitTags(
       ? workUnitStore.type === 'request'
         ? workUnitStore.url.pathname
         : workUnitStore.type === 'prerender' ||
+            workUnitStore.type === 'prerender-ppr' ||
             workUnitStore.type === 'prerender-legacy'
           ? workUnitStore.pathname
           : undefined
@@ -641,7 +642,11 @@ export function createPatchedFetcher(
               cacheKey &&
               (isCacheableRevalidate || requestStore?.serverComponentsHmrCache)
             ) {
-              if (workUnitStore && workUnitStore.type === 'prerender') {
+              if (
+                workUnitStore &&
+                (workUnitStore.type === 'prerender' ||
+                  workUnitStore.type === 'prerender-ppr')
+              ) {
                 // We are prerendering at build time or revalidate time so we need to
                 // buffer the response so we can guarantee it can be read in a microtask
 
