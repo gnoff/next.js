@@ -155,6 +155,8 @@ function revalidate(tags: string[], expression: string) {
     }
   }
 
+  console.log('store.revalidatedTags', store.revalidatedTags)
+
   // TODO: only revalidate if the path matches
   store.pathWasRevalidated = true
 }

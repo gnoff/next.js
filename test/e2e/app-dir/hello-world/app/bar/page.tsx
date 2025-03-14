@@ -1,5 +1,5 @@
 import { unstable_cacheLife as cacheLife } from 'next/cache'
-import { getPrettyTime } from './utils'
+import { getPrettyTime } from '../utils'
 
 export default async function Layout() {
   'use cache'
@@ -8,5 +8,5 @@ export default async function Layout() {
     revalidate: 1000,
     expire: 1000,
   })
-  return <div>Root page: {getPrettyTime()}</div>
+  return <div>bar page: {getPrettyTime()}</div>
 }
